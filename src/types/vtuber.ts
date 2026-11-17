@@ -283,6 +283,7 @@ export const CHARACTERS: CharacterMeta[] = [
     },
     animations: [
       { id: 'live', label: 'Живой VTuber', shortLabel: 'VTuber', loop: true },
+      { id: 'procedural_sit', label: 'Сидит на полу (живой)', shortLabel: 'Сидеть', loop: true },
       { id: '01_Happy_Bounce_Idle', label: 'Счастливый отскок', shortLabel: 'Idle', loop: true },
       { id: '02_Cute_Waddle_Walk', label: 'Милая походка', shortLabel: 'Walk', loop: true },
       { id: '03_Excited_Jump_Wave', label: 'Приветствие', shortLabel: 'Wave', loop: false },
@@ -326,6 +327,7 @@ export const CHARACTERS: CharacterMeta[] = [
     },
     animations: [
       { id: 'live', label: 'Живой VTuber', shortLabel: 'VTuber', loop: true },
+      { id: 'procedural_sit', label: 'Сидит на полу (живой)', shortLabel: 'Сидеть', loop: true },
       { id: 'Emote_California_Girls', label: 'California Girls', shortLabel: 'Cali', loop: true },
       { id: 'Guest_01_Cool_Cap_Idle', label: 'Крутой Idle', shortLabel: 'Idle', loop: true },
       { id: 'Guest_02_Swagger_Walk', label: 'Сваг-походка', shortLabel: 'Walk', loop: true },
@@ -371,6 +373,7 @@ export const CHARACTERS: CharacterMeta[] = [
     },
     animations: [
       { id: 'live', label: 'Живой VTuber', shortLabel: 'VTuber', loop: true },
+      { id: 'procedural_sit', label: 'Сидит на полу (живой)', shortLabel: 'Сидеть', loop: true },
       { id: 'Emote_California_Girls', label: 'California Girls', shortLabel: 'Cali', loop: true },
       { id: 'ModGuest_01_Chill_Pocket_Idle', label: 'Чилл-стойка', shortLabel: 'Idle', loop: true },
       { id: 'ModGuest_02_Sneaker_Bounce_Walk', label: 'Походка в кедах', shortLabel: 'Walk', loop: true },

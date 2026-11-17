@@ -359,6 +359,7 @@ export class VTuberStage {
   private lastHandsCount = 0;
   private lastArmError: string | null = null;
   private armTestTimer = 0;
+  private sitBlend = 0;
 
   // Pointer & interaction
   private pointerNdc = new THREE.Vector2(0, 0);
@@ -900,17 +901,22 @@ export class VTuberStage {
 
   public setAnimationMode(mode: AnimationId): void {
     if (this.animationMode === mode) return;
+    const prevWasProcedural = this.animationMode === 'live' || this.animationMode === 'procedural_sit';
     this.animationMode = mode;
 
     const ch = this.activeChar;
     if (!ch) return;
 
-    if (mode === 'live') {
-      ch.mixer.stopAllAction();
-      this.activeAction = null;
-      this.resetCharacterBonesToRest(ch);
+    if (mode === 'live' || mode === 'procedural_sit') {
+      if (!prevWasProcedural) {
+        ch.mixer.stopAllAction();
+        this.activeAction = null;
+        this.resetCharacterBonesToRest(ch);
+      }
       return;
     }
+
+    this.sitBlend = 0;
 
     if (this.activeAction) {
       this.activeAction.fadeOut(0.22);
@@ -1069,7 +1075,7 @@ export class VTuberStage {
 
   public triggerArmWaveTest(): void {
     this.armTestTimer = 2.6;
-    if (this.animationMode !== 'live') {
+    if (this.animationMode !== 'live' && this.animationMode !== 'procedural_sit') {
       this.setAnimationMode('live');
       this.callbacks.onAnimationChange?.('live');
     }
@@ -1516,8 +1522,11 @@ export class VTuberStage {
 
     // 5. Active Rig update
     const ch = this.activeChar;
+    const isProceduralMode = this.animationMode === 'live' || this.animationMode === 'procedural_sit';
+    this.sitBlend = damp(this.sitBlend, this.animationMode === 'procedural_sit' ? 1 : 0, 7.5, dt);
+
     if (ch) {
-      if (this.animationMode !== 'live') {
+      if (!isProceduralMode) {
         ch.mixer.update(dt);
       } else if (ch.bones.size > 0) {
         this.applyProceduralVTuberRig(ch, isTalking);
@@ -1671,6 +1680,7 @@ export class VTuberStage {
     }
 
     const squishWave = Math.sin(this.headpatSquish * Math.PI * 2.5) * this.headpatSquish * 0.14 * bounce;
+    const sit = this.sitBlend;
 
     const rootBone = ch.bones.get('Root');
     const rootRest = ch.boneRest.get('Root');
@@ -1683,20 +1693,23 @@ export class VTuberStage {
     const pelvis = ch.bones.get('Pelvis');
     const pelvisRest = ch.boneRest.get('Pelvis');
     if (pelvis && pelvisRest) {
-      const bobY = (breathe * 0.012 + voiceBounce + emoHop - Math.max(0, squishWave) * 0.12) * Math.max(0.25, bounce);
+      const effectiveHop = emoHop * (1 - sit * 0.72);
+      const sitDropY = -0.17 * sit;
+      const sitBackZ = -0.045 * sit;
+      const bobY = (breathe * 0.012 + voiceBounce + effectiveHop - Math.max(0, squishWave) * 0.12) * Math.max(0.25, bounce);
       pelvis.position.set(
         pelvisRest.position.x + this.curBodyX * 0.6 + emoJitter,
-        pelvisRest.position.y + bobY + this.curBodyY * 0.35,
-        pelvisRest.position.z,
+        pelvisRest.position.y + sitDropY + bobY + this.curBodyY * 0.35 * (1 - sit * 0.5),
+        pelvisRest.position.z + sitBackZ,
       );
       this.tmpEuler.set(
-        this.curPitch * 0.12 * sway,
+        this.curPitch * 0.12 * sway - 0.065 * sit,
         this.curYaw * 0.2 * sway + Math.sin(t * 1.35) * 0.025,
-        this.curRoll * 0.18 * sway + Math.sin(t * 1.6) * 0.02,
+        this.curRoll * 0.18 * sway + Math.sin(t * 1.6) * (0.02 + 0.025 * sit),
       );
       pelvis.quaternion.copy(pelvisRest.quaternion).multiply(this.tmpQuat.setFromEuler(this.tmpEuler));
-      const sx = 1 + squishWave * 0.45 - voiceBounce * 0.7;
-      const sy = 1 - squishWave * 0.55 + voiceBounce * 1.2;
+      const sx = 1 + squishWave * 0.45 - voiceBounce * 0.7 + sit * 0.025;
+      const sy = 1 - squishWave * 0.55 + voiceBounce * 1.2 - sit * 0.02;
       pelvis.scale.set(pelvisRest.scale.x * sx, pelvisRest.scale.y * sy, pelvisRest.scale.z * sx);
     }
 
@@ -1704,9 +1717,9 @@ export class VTuberStage {
     const torsoRest = ch.boneRest.get('Torso');
     if (torso && torsoRest) {
       this.tmpEuler.set(
-        this.curPitch * 0.28 * sway + breathe * 0.025,
+        this.curPitch * 0.28 * sway + breathe * 0.025 + 0.045 * sit,
         this.curYaw * 0.32 * sway,
-        this.curRoll * 0.32 * sway + this.curShoulderRoll * 0.55 * sway + emoHeadTilt * 0.25,
+        this.curRoll * 0.32 * sway + this.curShoulderRoll * 0.55 * sway + emoHeadTilt * 0.25 + Math.sin(t * 1.9) * 0.035 * sit,
       );
       torso.position.copy(torsoRest.position);
       torso.quaternion.copy(torsoRest.quaternion).multiply(this.tmpQuat.setFromEuler(this.tmpEuler));
@@ -1733,7 +1746,7 @@ export class VTuberStage {
       head.scale.set(headRest.scale.x * hScaleX, headRest.scale.y * hScaleY, headRest.scale.z * hScaleX);
     }
 
-    // Full 3D Webcam Arm Mirroring (smoothly slerped over procedural idle/emotion gestures!)
+    // Full 3D Webcam Arm Mirroring (smoothly slerped over procedural idle/sit/emotion gestures!)
     const armL = ch.bones.get('ArmL');
     const armLRest = ch.boneRest.get('ArmL');
     if (armL && armLRest) {
@@ -1743,6 +1756,17 @@ export class VTuberStage {
       this.tmpEuler.set(idleSwing + this.curPitch * 0.14, 0, raise + idleSwing * 0.6 - this.curRoll * 0.2);
       armL.position.copy(armLRest.position);
       armL.quaternion.copy(armLRest.quaternion).multiply(this.tmpQuat.setFromEuler(this.tmpEuler));
+
+      // Cozy seated arm pose (gently forward & outward over knees, overridden cleanly by webcam/test/repeater!)
+      if (sit > 0.005) {
+        this.tmpVecA
+          .set(0.54, -0.58 + Math.sin(t * 2.2) * 0.05 + talkGest * 0.75 + emoArmRaise * 0.45, 0.56)
+          .normalize();
+        this.tmpVecB.copy(this.upAxis).applyQuaternion(armLRest.quaternion).normalize();
+        this.tmpArmQuat.setFromUnitVectors(this.tmpVecB, this.tmpVecA);
+        this.tmpTargetQuat.copy(this.tmpArmQuat).multiply(armLRest.quaternion);
+        armL.quaternion.slerp(this.tmpTargetQuat, sit * (1 - this.curArmBlendL));
+      }
 
       if (this.curArmBlendL > 0.005) {
         // Aim bone's local +Y axis directly along curArmDirL in Torso space (zero gimbal lock!)
@@ -1772,6 +1796,16 @@ export class VTuberStage {
       armR.position.copy(armRRest.position);
       armR.quaternion.copy(armRRest.quaternion).multiply(this.tmpQuat.setFromEuler(this.tmpEuler));
 
+      if (sit > 0.005) {
+        this.tmpVecA
+          .set(-0.54, -0.58 + Math.cos(t * 2.2) * 0.05 + talkGest * 0.75 + emoArmRaise * 0.45, 0.56)
+          .normalize();
+        this.tmpVecB.copy(this.upAxis).applyQuaternion(armRRest.quaternion).normalize();
+        this.tmpArmQuat.setFromUnitVectors(this.tmpVecB, this.tmpVecA);
+        this.tmpTargetQuat.copy(this.tmpArmQuat).multiply(armRRest.quaternion);
+        armR.quaternion.slerp(this.tmpTargetQuat, sit * (1 - this.curArmBlendR));
+      }
+
       if (this.curArmBlendR > 0.005) {
         this.tmpVecB.copy(this.upAxis).applyQuaternion(armRRest.quaternion).normalize();
         this.tmpArmQuat.setFromUnitVectors(this.tmpVecB, this.curArmDirR);
@@ -1788,6 +1822,10 @@ export class VTuberStage {
       armR.scale.copy(armRRest.scale);
     }
 
+    const excitedKick = isTalking || this.emotion === 'hype' || this.headpatTimer > 0;
+    const sitKickSpeed = excitedKick ? 6.6 : 3.2;
+    const sitKickAmp = excitedKick ? 0.20 : 0.10;
+
     for (const side of ['LegL', 'LegR'] as const) {
       const leg = ch.bones.get(side);
       const rest = ch.boneRest.get(side);
@@ -1795,8 +1833,24 @@ export class VTuberStage {
       const sign = side === 'LegL' ? 1 : -1;
       const kick = emoHop > 0.02 ? Math.sin(t * 7.2 + (sign > 0 ? 0 : Math.PI)) * 0.16 : 0;
       this.tmpEuler.set(kick, 0, -this.curRoll * 0.12 * sway);
-      leg.position.copy(rest.position);
+      leg.position.set(
+        rest.position.x + sign * 0.014 * sit,
+        rest.position.y + 0.012 * sit,
+        rest.position.z + 0.042 * sit,
+      );
       leg.quaternion.copy(rest.quaternion).multiply(this.tmpQuat.setFromEuler(this.tmpEuler));
+
+      if (sit > 0.005) {
+        // Aim Leg bone's local +Y axis forward (+Z) and slightly outward (±X) with playful dangling kicks!
+        const legBob = Math.sin(t * sitKickSpeed + (sign > 0 ? 0 : Math.PI)) * sitKickAmp * Math.max(0.35, bounce);
+        const legSplay = sign * (0.31 + Math.cos(t * sitKickSpeed * 0.5) * 0.04);
+        this.tmpVecA.set(legSplay, 0.06 + Math.max(-0.04, legBob), 0.95).normalize();
+        this.tmpVecB.copy(this.upAxis).applyQuaternion(rest.quaternion).normalize();
+        this.tmpArmQuat.setFromUnitVectors(this.tmpVecB, this.tmpVecA);
+        this.tmpTargetQuat.copy(this.tmpArmQuat).multiply(rest.quaternion);
+        leg.quaternion.slerp(this.tmpTargetQuat, sit);
+      }
+
       leg.scale.copy(rest.scale);
     }
   }

@@ -367,6 +367,11 @@ export const App: React.FC = () => {
         return;
       }
 
+      if (key === 's' || key === 'ы') {
+        setAnimationMode((prev) => (prev === 'procedural_sit' ? 'live' : 'procedural_sit'));
+        return;
+      }
+
       if (e.code === 'Space') {
         e.preventDefault();
         stageRef.current?.triggerHeadpat();
@@ -381,7 +386,7 @@ export const App: React.FC = () => {
     (id: CharacterId) => {
       if (id === characterId) return;
       setCharacterId(id);
-      setAnimationMode('live');
+      setAnimationMode((prev) => (prev === 'procedural_sit' ? 'procedural_sit' : 'live'));
       const meta = getCharacterMeta(id);
       showToast(`Персонаж: ${meta.name} (${meta.animations.length - 1} анимаций)`);
     },
@@ -548,7 +553,7 @@ export const App: React.FC = () => {
       await stage.webcam.start(settings.armTracking);
       setWebcamStatus('active');
       setDemoSpeech(false);
-      setAnimationMode('live');
+      setAnimationMode((prev) => (prev === 'procedural_sit' ? prev : 'live'));
       showToast(
         settings.armTracking
           ? 'Трекинг лица, рта и рук запущен!'
@@ -625,7 +630,7 @@ export const App: React.FC = () => {
 
     try {
       setDemoSpeech(false);
-      setAnimationMode('live');
+      setAnimationMode((prev) => (prev === 'procedural_sit' ? prev : 'live'));
       await stage.repeater.startListening();
       showToast('👶 Повторяшка включена! Скажи фразу — персонаж повторит голосом малыша!', 3600);
     } catch (err) {
@@ -648,7 +653,7 @@ export const App: React.FC = () => {
 
     try {
       setDemoSpeech(false);
-      setAnimationMode('live');
+      setAnimationMode((prev) => (prev === 'procedural_sit' ? prev : 'live'));
       await stage.repeater.startManualRecording();
       showToast('🎙️ Говори фразу и нажми «Повторить!»', 2800);
     } catch (err) {

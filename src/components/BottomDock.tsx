@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles } from 'lucide-react';
+import { Armchair, Sparkles } from 'lucide-react';
 import {
   EMOTIONS,
   type AnimationId,
@@ -89,6 +89,7 @@ export const BottomDock: React.FC<BottomDockProps> = ({
           {animations.map((anim) => {
             const active = animationMode === anim.id;
             const isLive = anim.id === 'live';
+            const isSit = anim.id === 'procedural_sit';
             return (
               <button
                 key={anim.id}
@@ -99,11 +100,14 @@ export const BottomDock: React.FC<BottomDockProps> = ({
                   active
                     ? isLive
                       ? 'bg-[#0648a6] text-white shadow-sm shadow-[#0648a6]/30'
-                      : 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/30'
+                      : isSit
+                        ? 'bg-violet-600 text-white shadow-sm shadow-violet-600/35'
+                        : 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/30'
                     : idleBtn
                 }`}
               >
                 {isLive && <Sparkles className="h-3 w-3 lg:h-3.5 lg:w-3.5" />}
+                {isSit && <Armchair className="h-3 w-3 lg:h-3.5 lg:w-3.5" />}
                 <span>{anim.shortLabel}</span>
               </button>
             );

@@ -332,10 +332,23 @@ export class VTuberStage {
   private curBlinkR = 0;
   private curMouthOpen = 0;
   private curMouthSmile = 0.65;
+  private curMouthWidth = 1.0;
   private curMouthRound = 0;
+  private curMouthShiftX = 0;
+  private curMouthSkew = 0;
   private curBrowUp = 0;
   private curBrowDown = 0;
   private curAudioLevel = 0;
+  private curShoulderRoll = 0;
+
+  // Full 3D arm tracking vectors (in character Torso space)
+  private readonly curArmDirL = new THREE.Vector3(0.5, -0.866, 0);
+  private readonly curArmDirR = new THREE.Vector3(-0.5, -0.866, 0);
+  private curArmBlendL = 0;
+  private curArmBlendR = 0;
+  private lastArmLDetected = false;
+  private lastArmRDetected = false;
+  private lastPoseReady = false;
 
   // Pointer & interaction
   private pointerNdc = new THREE.Vector2(0, 0);
@@ -365,6 +378,11 @@ export class VTuberStage {
 
   private readonly tmpEuler = new THREE.Euler(0, 0, 0, 'YXZ');
   private readonly tmpQuat = new THREE.Quaternion();
+  private readonly tmpArmQuat = new THREE.Quaternion();
+  private readonly tmpTargetQuat = new THREE.Quaternion();
+  private readonly tmpVecA = new THREE.Vector3();
+  private readonly tmpVecB = new THREE.Vector3();
+  private readonly upAxis = new THREE.Vector3(0, 1, 0);
 
   constructor(
     container: HTMLElement,
@@ -1153,7 +1171,9 @@ export class VTuberStage {
 
     // 1. Sample inputs
     const webcamActive = this.webcam.isActive();
-    const camPose = webcamActive ? this.webcam.detect(this.settings.mirrorCamera) : null;
+    const camPose = webcamActive
+      ? this.webcam.detect(this.settings.mirrorCamera, this.settings.armTracking)
+      : null;
     const micSample = this.audio.sample(this.settings.micGain, dt);
     const demoSample = this.demoSpeech ? sampleDemoSpeech(this.elapsed) : null;
 
@@ -1170,9 +1190,13 @@ export class VTuberStage {
     let targetBlinkR = 0;
     let targetMouthOpen = 0;
     let targetMouthSmile = 0.65;
+    let targetMouthWidth = 1.0;
     let targetMouthRound = 0;
+    let targetMouthShiftX = 0;
+    let targetMouthSkew = 0;
     let targetBrowUp = 0;
     let targetBrowDown = 0;
+    let targetShoulderRoll = 0;
     let faceDetected = false;
 
     if (camPose && camPose.faceDetected) {
@@ -1188,9 +1212,13 @@ export class VTuberStage {
       targetGazeY = this.settings.eyeTracking ? camPose.gazeY : 0;
       targetMouthOpen = camPose.jawOpen;
       targetMouthSmile = camPose.mouthSmile;
+      targetMouthWidth = camPose.mouthWidth;
       targetMouthRound = camPose.mouthRound;
+      targetMouthShiftX = camPose.mouthShiftX;
+      targetMouthSkew = camPose.mouthSkew;
       targetBrowUp = camPose.browUp;
       targetBrowDown = camPose.browDown;
+      targetShoulderRoll = camPose.shoulderRoll;
     } else if (demoSample) {
       targetYaw = demoSample.headYaw * sens;
       targetPitch = demoSample.headNod * sens;
@@ -1209,11 +1237,88 @@ export class VTuberStage {
       }
     }
 
+    // Smoothly track 3D arm target vectors from PoseLandmarker (or Demo Speech conversational gestures)
+    this.lastPoseReady = Boolean(camPose?.poseReady);
+    this.lastArmLDetected = false;
+    this.lastArmRDetected = false;
+
+    const armLambda = THREE.MathUtils.lerp(24, 7.5, clamp(this.settings.smoothing, 0.05, 0.95));
+    const armAlpha = 1 - Math.exp(-armLambda * dt);
+    const armSens = this.settings.armSensitivity;
+
+    const updateArmTarget = (
+      side: 'L' | 'R',
+      curDir: THREE.Vector3,
+      raw: { x: number; y: number; z: number; detected: boolean } | null,
+      demoDir: THREE.Vector3 | null,
+    ): number => {
+      const restX = side === 'L' ? 0.5 : -0.5;
+      const restY = -0.866;
+
+      if (raw && raw.detected && this.settings.armTracking) {
+        // Amplify arm movement smoothly around rest pose using armSensitivity
+        let tx = restX + (raw.x - restX) * armSens;
+        let ty = restY + (raw.y - restY) * armSens;
+        let tz = raw.z * armSens;
+
+        // Prevent arm from clipping inside torso when crossing inward across chest
+        if (side === 'L' && tx < 0.16) {
+          tz = Math.max(tz, 0.34);
+        } else if (side === 'R' && tx > -0.16) {
+          tz = Math.max(tz, 0.34);
+        }
+        // Keep arm mostly in natural front/side hemisphere
+        tz = clamp(tz, -0.35, 0.95);
+
+        this.tmpVecA.set(tx, ty, tz);
+        if (this.tmpVecA.lengthSq() > 1e-4) {
+          this.tmpVecA.normalize();
+          curDir.lerp(this.tmpVecA, armAlpha).normalize();
+        }
+        return 1;
+      }
+
+      if (demoDir) {
+        curDir.lerp(demoDir, 1 - Math.exp(-9 * dt)).normalize();
+        return 0.85;
+      }
+
+      // Gently drift back toward rest vector when untracked
+      this.tmpVecA.set(restX, restY, 0);
+      curDir.lerp(this.tmpVecA, 1 - Math.exp(-6 * dt)).normalize();
+      return 0;
+    };
+
+    let demoArmL: THREE.Vector3 | null = null;
+    let demoArmR: THREE.Vector3 | null = null;
+    if (demoSample && !webcamActive) {
+      const talk = demoSample.audioLevel;
+      demoArmL = new THREE.Vector3(
+        0.58 + Math.sin(this.elapsed * 3.1) * 0.25,
+        -0.45 + talk * 0.78 + Math.sin(this.elapsed * 5.4) * 0.22,
+        0.28 + talk * 0.42,
+      ).normalize();
+      demoArmR = new THREE.Vector3(
+        -0.58 + Math.cos(this.elapsed * 2.7) * 0.22,
+        -0.5 + talk * 0.68 + Math.cos(this.elapsed * 4.8) * 0.2,
+        0.24 + talk * 0.36,
+      ).normalize();
+    }
+
+    const wantBlendL = updateArmTarget('L', this.curArmDirL, camPose?.armL ?? null, demoArmL);
+    const wantBlendR = updateArmTarget('R', this.curArmDirR, camPose?.armR ?? null, demoArmR);
+    this.curArmBlendL = damp(this.curArmBlendL, wantBlendL, wantBlendL > this.curArmBlendL ? 11 : 5, dt);
+    this.curArmBlendR = damp(this.curArmBlendR, wantBlendR, wantBlendR > this.curArmBlendR ? 11 : 5, dt);
+    this.lastArmLDetected = Boolean(camPose?.armL.detected && this.settings.armTracking);
+    this.lastArmRDetected = Boolean(camPose?.armR.detected && this.settings.armTracking);
+
     const isLipSyncActive = this.audio.isActive() || this.demoSpeech || (webcamActive && faceDetected);
+    const isFullMouthTracked = Boolean(webcamActive && faceDetected && this.settings.fullMouthTracking);
+
     if (this.audio.isActive()) {
       targetMouthOpen = Math.max(targetMouthOpen, micSample.mouthOpen);
       if (micSample.isTalking) {
-        targetMouthRound = Math.max(targetMouthRound * 0.5, micSample.mouthRound);
+        targetMouthRound = Math.max(targetMouthRound * 0.6, micSample.mouthRound);
       }
     }
     if (demoSample) {
@@ -1235,22 +1340,26 @@ export class VTuberStage {
     }
     this.headpatSquish = damp(this.headpatSquish, 0, 7.5, dt);
 
-    // 3. Smooth damping
+    // 3. Smooth damping (snappy mouth & eye response, smooth head & body)
     const poseLambda = THREE.MathUtils.lerp(22, 4.5, clamp(this.settings.smoothing, 0.05, 0.95));
     this.curYaw = damp(this.curYaw, targetYaw, poseLambda, dt);
     this.curPitch = damp(this.curPitch, targetPitch, poseLambda, dt);
     this.curRoll = damp(this.curRoll, targetRoll, poseLambda, dt);
+    this.curShoulderRoll = damp(this.curShoulderRoll, targetShoulderRoll, poseLambda * 0.75, dt);
     this.curBodyX = damp(this.curBodyX, targetBodyX, poseLambda * 0.65, dt);
     this.curBodyY = damp(this.curBodyY, targetBodyY, poseLambda * 0.65, dt);
-    this.curGazeX = damp(this.curGazeX, targetGazeX, 16, dt);
-    this.curGazeY = damp(this.curGazeY, targetGazeY, 16, dt);
-    this.curBlinkL = damp(this.curBlinkL, targetBlinkL, 28, dt);
-    this.curBlinkR = damp(this.curBlinkR, targetBlinkR, 28, dt);
-    this.curMouthOpen = damp(this.curMouthOpen, targetMouthOpen, 24, dt);
-    this.curMouthSmile = damp(this.curMouthSmile, targetMouthSmile, 12, dt);
-    this.curMouthRound = damp(this.curMouthRound, targetMouthRound, 16, dt);
-    this.curBrowUp = damp(this.curBrowUp, targetBrowUp, 14, dt);
-    this.curBrowDown = damp(this.curBrowDown, targetBrowDown, 14, dt);
+    this.curGazeX = damp(this.curGazeX, targetGazeX, 18, dt);
+    this.curGazeY = damp(this.curGazeY, targetGazeY, 18, dt);
+    this.curBlinkL = damp(this.curBlinkL, targetBlinkL, 30, dt);
+    this.curBlinkR = damp(this.curBlinkR, targetBlinkR, 30, dt);
+    this.curMouthOpen = damp(this.curMouthOpen, targetMouthOpen, 32, dt);
+    this.curMouthSmile = damp(this.curMouthSmile, targetMouthSmile, 20, dt);
+    this.curMouthWidth = damp(this.curMouthWidth, targetMouthWidth, 24, dt);
+    this.curMouthRound = damp(this.curMouthRound, targetMouthRound, 24, dt);
+    this.curMouthShiftX = damp(this.curMouthShiftX, targetMouthShiftX, 24, dt);
+    this.curMouthSkew = damp(this.curMouthSkew, targetMouthSkew, 22, dt);
+    this.curBrowUp = damp(this.curBrowUp, targetBrowUp, 16, dt);
+    this.curBrowDown = damp(this.curBrowDown, targetBrowDown, 16, dt);
 
     const rawAudio = this.audio.isActive()
       ? micSample.audioLevel
@@ -1260,7 +1369,7 @@ export class VTuberStage {
     this.curAudioLevel = damp(this.curAudioLevel, rawAudio, 16, dt);
     const isTalking = this.curMouthOpen > 0.14 || micSample.isTalking || Boolean(demoSample?.isTalking);
 
-    // 4. Live Face Engine render (character-aware UV layout + custom colors & face style!)
+    // 4. Live Face Engine render (character-aware UV layout + custom colors + full mouth mirroring!)
     const patBlush = this.headpatTimer > 0 ? Math.min(1, this.headpatTimer * 1.4) : 0;
     const blushIntensity = clamp((this.accessoriesState.blushAlways ? 0.85 : 0) + patBlush, 0, 1);
 
@@ -1277,11 +1386,15 @@ export class VTuberStage {
       gazeY: this.curGazeY,
       mouthOpen: this.curMouthOpen,
       mouthSmile: this.curMouthSmile,
+      mouthWidth: this.curMouthWidth,
       mouthRound: this.curMouthRound,
+      mouthShiftX: this.curMouthShiftX,
+      mouthSkew: this.curMouthSkew,
       browUp: this.curBrowUp,
       browDown: this.curBrowDown,
       blushIntensity,
       isLipSyncActive,
+      isFullMouthTracked,
       time: this.elapsed,
     });
 
@@ -1333,9 +1446,16 @@ export class VTuberStage {
         blinkL: this.curBlinkL,
         blinkR: this.curBlinkR,
         mouthOpen: this.curMouthOpen,
+        mouthWidth: this.curMouthWidth,
+        mouthSmile: this.curMouthSmile,
         audioLevel: this.curAudioLevel,
         isTalking,
         faceDetected,
+        armLDetected: this.lastArmLDetected,
+        armRDetected: this.lastArmRDetected,
+        armLLift: clamp((this.curArmDirL.y + 0.9) / 1.85, 0, 1),
+        armRLift: clamp((this.curArmDirR.y + 0.9) / 1.85, 0, 1),
+        poseReady: this.lastPoseReady,
         fps: this.currentFps,
         spectrum,
       });
@@ -1460,7 +1580,7 @@ export class VTuberStage {
       this.tmpEuler.set(
         this.curPitch * 0.28 * sway + breathe * 0.025,
         this.curYaw * 0.32 * sway,
-        this.curRoll * 0.32 * sway + emoHeadTilt * 0.25,
+        this.curRoll * 0.32 * sway + this.curShoulderRoll * 0.55 * sway + emoHeadTilt * 0.25,
       );
       torso.position.copy(torsoRest.position);
       torso.quaternion.copy(torsoRest.quaternion).multiply(this.tmpQuat.setFromEuler(this.tmpEuler));
@@ -1487,6 +1607,7 @@ export class VTuberStage {
       head.scale.set(headRest.scale.x * hScaleX, headRest.scale.y * hScaleY, headRest.scale.z * hScaleX);
     }
 
+    // Full 3D Webcam Arm Mirroring (smoothly slerped over procedural idle/emotion gestures!)
     const armL = ch.bones.get('Arm.L');
     const armLRest = ch.boneRest.get('Arm.L');
     if (armL && armLRest) {
@@ -1496,6 +1617,14 @@ export class VTuberStage {
       this.tmpEuler.set(idleSwing + this.curPitch * 0.14, 0, raise + idleSwing * 0.6 - this.curRoll * 0.2);
       armL.position.copy(armLRest.position);
       armL.quaternion.copy(armLRest.quaternion).multiply(this.tmpQuat.setFromEuler(this.tmpEuler));
+
+      if (this.curArmBlendL > 0.005) {
+        // Aim bone's local +Y axis directly along curArmDirL in Torso space (zero gimbal lock!)
+        this.tmpVecB.copy(this.upAxis).applyQuaternion(armLRest.quaternion).normalize();
+        this.tmpArmQuat.setFromUnitVectors(this.tmpVecB, this.curArmDirL);
+        this.tmpTargetQuat.copy(this.tmpArmQuat).multiply(armLRest.quaternion);
+        armL.quaternion.slerp(this.tmpTargetQuat, this.curArmBlendL);
+      }
       armL.scale.copy(armLRest.scale);
     }
 
@@ -1508,6 +1637,13 @@ export class VTuberStage {
       this.tmpEuler.set(idleSwing + this.curPitch * 0.14, 0, -(raise + idleSwing * 0.6) - this.curRoll * 0.2);
       armR.position.copy(armRRest.position);
       armR.quaternion.copy(armRRest.quaternion).multiply(this.tmpQuat.setFromEuler(this.tmpEuler));
+
+      if (this.curArmBlendR > 0.005) {
+        this.tmpVecB.copy(this.upAxis).applyQuaternion(armRRest.quaternion).normalize();
+        this.tmpArmQuat.setFromUnitVectors(this.tmpVecB, this.curArmDirR);
+        this.tmpTargetQuat.copy(this.tmpArmQuat).multiply(armRRest.quaternion);
+        armR.quaternion.slerp(this.tmpTargetQuat, this.curArmBlendR);
+      }
       armR.scale.copy(armRRest.scale);
     }
 

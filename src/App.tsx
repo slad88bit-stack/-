@@ -36,9 +36,16 @@ const INITIAL_TELEMETRY: TelemetrySnapshot = {
   blinkL: 0,
   blinkR: 0,
   mouthOpen: 0,
+  mouthWidth: 1.0,
+  mouthSmile: 0.65,
   audioLevel: 0,
   isTalking: false,
   faceDetected: false,
+  armLDetected: false,
+  armRDetected: false,
+  armLLift: 0,
+  armRLift: 0,
+  poseReady: false,
   fps: 60,
   spectrum: new Array<number>(16).fill(0),
 };
@@ -432,7 +439,7 @@ export const App: React.FC = () => {
       setWebcamStatus('active');
       setDemoSpeech(false);
       setAnimationMode('live');
-      showToast('Трекинг лица запущен! Поверни голову или моргни');
+      showToast('Трекинг лица, рта и рук запущен! Двигай губами и руками перед камерой', 3200);
     } catch (err) {
       const msg =
         err instanceof Error

@@ -75,11 +75,16 @@ export const TopBar: React.FC<TopBarProps> = ({
     ? 'text-slate-200 hover:bg-white/10 border-transparent'
     : 'text-slate-700 hover:bg-slate-900/6 border-transparent';
 
+  const armsTracked = telemetry.armLDetected || telemetry.armRDetected;
   const statusText =
     webcamStatus === 'active'
-      ? telemetry.faceDetected
-        ? 'Камера · лицо'
-        : 'Камера · поиск…'
+      ? telemetry.faceDetected && armsTracked
+        ? 'Лицо + руки'
+        : telemetry.faceDetected
+          ? 'Камера · лицо'
+          : armsTracked
+            ? 'Камера · руки'
+            : 'Камера · поиск…'
       : webcamStatus === 'loading'
         ? 'Загрузка…'
         : demoSpeech
@@ -92,7 +97,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   const statusDotColor =
     webcamStatus === 'active'
-      ? telemetry.faceDetected
+      ? telemetry.faceDetected || armsTracked
         ? 'bg-emerald-500'
         : 'bg-amber-400 animate-pulse'
       : demoSpeech || micStatus === 'active'
@@ -174,7 +179,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           type="button"
           onClick={onToggleWebcam}
           disabled={webcamStatus === 'loading'}
-          title="Трекинг лица через веб-камеру (MediaPipe)"
+          title="Трекинг лица, рта и рук через веб-камеру (MediaPipe)"
           className={`flex cursor-pointer items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition-all ${
             webcamStatus === 'active'
               ? 'border-emerald-500/40 bg-emerald-500 text-white shadow-sm shadow-emerald-500/30'

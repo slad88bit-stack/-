@@ -103,11 +103,15 @@ export class FaceCanvasEngine {
       gazeY: 0,
       mouthOpen: 0,
       mouthSmile: 0.7,
+      mouthWidth: 1.0,
       mouthRound: 0,
+      mouthShiftX: 0,
+      mouthSkew: 0,
       browUp: 0,
       browDown: 0,
       blushIntensity: 0,
       isLipSyncActive: false,
+      isFullMouthTracked: false,
       time: 0,
     });
   }
@@ -121,7 +125,7 @@ export class FaceCanvasEngine {
     const style = this.resolveFaceStyle(state.characterId, state.faceStyle);
     const isAnimatedEmotion = state.emotion === 'hype' || state.emotion === 'cry' || state.emotion === 'sleepy';
     const sig = isAnimatedEmotion
-      ? `${state.characterId}|${style}|${state.skinColor}|${state.eyeColor}|${state.mouthColor}|${state.emotion}|${Math.floor(state.time * 30)}|${state.mouthOpen.toFixed(2)}|${state.blinkL.toFixed(2)}`
+      ? `${state.characterId}|${style}|${state.skinColor}|${state.eyeColor}|${state.mouthColor}|${state.emotion}|${Math.floor(state.time * 30)}|${state.mouthOpen.toFixed(2)}|${state.mouthWidth.toFixed(2)}|${state.mouthSmile.toFixed(2)}|${state.blinkL.toFixed(2)}`
       : [
           state.characterId,
           style,
@@ -135,11 +139,15 @@ export class FaceCanvasEngine {
           state.gazeY.toFixed(2),
           state.mouthOpen.toFixed(2),
           state.mouthSmile.toFixed(2),
+          state.mouthWidth.toFixed(2),
           state.mouthRound.toFixed(2),
+          state.mouthShiftX.toFixed(2),
+          state.mouthSkew.toFixed(2),
           state.browUp.toFixed(2),
           state.browDown.toFixed(2),
           state.blushIntensity.toFixed(2),
           state.isLipSyncActive ? '1' : '0',
+          state.isFullMouthTracked ? '1' : '0',
         ].join('|');
 
     if (sig === this.lastSignature) return;
@@ -567,10 +575,14 @@ export class FaceCanvasEngine {
     oy: number,
   ): void {
     const sc = layout.scale;
-    const mx = layout.mouthX + ox;
+    const shiftX = clamp(state.mouthShiftX, -1, 1) * 38 * sc;
+    const mx = layout.mouthX + ox + shiftX;
     const my = layout.mouthBaseY + oy;
     const open = clamp(state.mouthOpen, 0, 1);
     const round = clamp(state.mouthRound, 0, 1);
+    const widthNorm = clamp(state.mouthWidth, 0.42, 1.35);
+    const smile = clamp(state.mouthSmile, -1, 1);
+    const skew = clamp(state.mouthSkew, -1, 1);
     const tongueColor = state.mouthColor;
     const cavityColor = darkenHex(state.mouthColor, 0.78);
 
@@ -578,6 +590,116 @@ export class FaceCanvasEngine {
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
 
+    // === FULL REAL-TIME WEBCAM MOUTH MIRRORING ===
+    // Directly mirrors open/close, width/pucker, smile/frown, horizontal jaw shift, and asymmetric smirk!
+    if (state.isFullMouthTracked) {
+      if (open < 0.075) {
+        // Closed lips: pucker kiss vs live flexible smile/neutral/frown/smirk line
+        if (round > 0.62) {
+          // Cute closed pucker / kissy mouth
+          ctx.strokeStyle = '#0c0c0c';
+          ctx.lineWidth = 15 * sc;
+          ctx.beginPath();
+          ctx.moveTo(mx - 24 * sc, my + 32 * sc);
+          ctx.quadraticCurveTo(mx + 14 * sc, my + 42 * sc, mx - 12 * sc, my + 54 * sc);
+          ctx.quadraticCurveTo(mx + 16 * sc, my + 66 * sc, mx - 22 * sc, my + 74 * sc);
+          ctx.stroke();
+          ctx.restore();
+          return;
+        }
+
+        const halfW = 92 * widthNorm * sc;
+        const baseY = my + 52 * sc;
+        const smileCurve = smile * 64 * sc; // +smile pulls center DOWN / corners UP; -frown pulls corners DOWN
+        const skewLift = skew * 24 * sc;
+        const leftCornerY = baseY - smileCurve * 0.48 + skewLift;
+        const rightCornerY = baseY - smileCurve * 0.48 - skewLift;
+        const midControlY = baseY + smileCurve * 0.72;
+
+        ctx.strokeStyle = '#0c0c0c';
+        ctx.lineWidth = (style === 'classic_pills' ? 22 : 16) * sc;
+        ctx.beginPath();
+        ctx.moveTo(mx - halfW, leftCornerY);
+        ctx.quadraticCurveTo(mx, midControlY, mx + halfW, rightCornerY);
+        ctx.stroke();
+        ctx.restore();
+        return;
+      }
+
+      // Open Pucker / Funnel ('O' / 'U' / whistle / kiss-open)
+      if (round > 0.56 || widthNorm < 0.66) {
+        const rx = clamp(lerp(28, 76, widthNorm * 0.65 + open * 0.35), 24, 80) * sc;
+        const ry = clamp(lerp(24, 86, open), 22, 90) * sc;
+        this.drawRoundOMouth(ctx, mx, my + 58 * sc, rx, ry, cavityColor, tongueColor, sc);
+        ctx.restore();
+        return;
+      }
+
+      // Open Talking / Smiling / Frowning / Smirking / Laughing Mouth!
+      const halfW = clamp(lerp(66, 126, open * 0.45 + 0.35) * widthNorm, 48, 148) * sc;
+      const topCenterY = my + lerp(36, 4, open) * sc;
+      const skewLift = skew * 20 * sc;
+      // Smile lifts corners above topCenter; frown drops corners below topCenter!
+      const cornerDeltaY = -smile * 28 * sc;
+      const leftCornerY = topCenterY + cornerDeltaY + skewLift;
+      const rightCornerY = topCenterY + cornerDeltaY - skewLift;
+      const topMidControlY = topCenterY + (smile >= 0 ? lerp(8, 28, smile * open) : smile * 34) * sc;
+      const bottomY = topCenterY + lerp(34, 174, open) * sc;
+
+      const traceTrackedMouth = () => {
+        ctx.beginPath();
+        ctx.moveTo(mx - halfW, leftCornerY);
+        ctx.quadraticCurveTo(mx, topMidControlY, mx + halfW, rightCornerY);
+        ctx.bezierCurveTo(
+          mx + halfW * 1.02,
+          lerp(rightCornerY, bottomY, 0.62),
+          mx + halfW * 0.56,
+          bottomY,
+          mx,
+          bottomY,
+        );
+        ctx.bezierCurveTo(
+          mx - halfW * 0.56,
+          bottomY,
+          mx - halfW * 1.02,
+          lerp(leftCornerY, bottomY, 0.62),
+          mx - halfW,
+          leftCornerY,
+        );
+        ctx.closePath();
+      };
+
+      ctx.save();
+      traceTrackedMouth();
+      ctx.fillStyle = cavityColor;
+      ctx.fill();
+      ctx.clip();
+
+      const tongueTopY = lerp(topCenterY + 12 * sc, bottomY, 0.34);
+      ctx.fillStyle = tongueColor;
+      ctx.beginPath();
+      ctx.ellipse(
+        mx,
+        bottomY + 14 * sc,
+        halfW * 1.08,
+        Math.max(22 * sc, bottomY - tongueTopY + 18 * sc),
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fill();
+      ctx.restore();
+
+      traceTrackedMouth();
+      ctx.strokeStyle = '#0c0c0c';
+      ctx.lineWidth = 16 * sc;
+      ctx.stroke();
+
+      ctx.restore();
+      return;
+    }
+
+    // === EMOTION / IDLE / PURE AUDIO LIP-SYNC MODE ===
     // Special emotion resting mouths when not talking loudly
     if (!state.isLipSyncActive || open < 0.08) {
       if (state.emotion === 'blush' && open < 0.15) {
@@ -641,7 +763,6 @@ export class FaceCanvasEngine {
         return;
       }
 
-      // Authentic Classic / Modern Guest resting curved Roblox smile when idle!
       if (style === 'classic_pills' && (state.emotion === 'happy' || state.emotion === 'wink') && open < 0.08) {
         const halfW = (state.characterId === 'modern_guest' ? 124 : 138) * sc;
         const depth = (state.characterId === 'modern_guest' ? 105 : 96) * sc;
@@ -665,10 +786,9 @@ export class FaceCanvasEngine {
       }
     }
 
-    // Closed happy smile during silence when lip-sync active
     if (effOpen < 0.08) {
       const smileLift = (state.emotion === 'angry' || state.emotion === 'cry' ? -18 : style === 'classic_pills' ? 76 : 30) * sc;
-      const halfW = lerp(74, style === 'classic_pills' ? 124 : 96, clamp((state.mouthSmile + 1) * 0.5, 0, 1)) * sc;
+      const halfW = lerp(74, style === 'classic_pills' ? 124 : 96, clamp((smile + 1) * 0.5, 0, 1)) * sc;
       ctx.strokeStyle = '#0c0c0c';
       ctx.lineWidth = (style === 'classic_pills' ? 24 : 15) * sc;
       ctx.beginPath();
@@ -679,7 +799,6 @@ export class FaceCanvasEngine {
       return;
     }
 
-    // Rounded vowel ('O' / 'U')
     if (round > 0.55 || (state.emotion === 'surprised' && effOpen > 0.2)) {
       const rMix = state.emotion === 'surprised' ? 0.85 : round;
       const rx = lerp(42, 62, effOpen) * lerp(1.15, 0.82, rMix) * sc;
@@ -689,11 +808,10 @@ export class FaceCanvasEngine {
       return;
     }
 
-    // Expressive D-Smile / Talking Mouth (2-tone crimson + bright tongue + thick black outline)
     const smileFactor =
       state.emotion === 'angry' || state.emotion === 'cry'
         ? -0.35
-        : clamp(state.mouthSmile, -0.4, 1);
+        : clamp(smile, -0.4, 1);
 
     const halfW =
       lerp(74, 114, clamp(effOpen * 0.75 + 0.25, 0, 1)) *

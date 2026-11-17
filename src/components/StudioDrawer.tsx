@@ -532,7 +532,7 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center text-slate-300">
                     <Video className="h-7 w-7 opacity-60" />
                     <p className="text-xs leading-snug text-slate-300/90">
-                      Включи камеру для 3D-трекинга лица, моргания и мимики в реальном времени
+                      Включи камеру для полного 3D-трекинга лица, рта (открытие, ширина, улыбка) и рук в реальном времени
                     </p>
                     <button
                       type="button"
@@ -544,20 +544,41 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
                   </div>
                 )}
                 {webcamStatus === 'active' && (
-                  <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-2">
-                    <span
-                      className={`rounded-md px-2 py-0.5 text-[10px] font-semibold backdrop-blur-md ${
-                        telemetry.faceDetected
-                          ? 'bg-emerald-500/85 text-white'
-                          : 'bg-amber-500/85 text-slate-950'
-                      }`}
-                    >
-                      {telemetry.faceDetected ? 'Лицо найдено' : 'Посмотри в камеру…'}
-                    </span>
+                  <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span
+                        className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold backdrop-blur-md ${
+                          telemetry.faceDetected
+                            ? 'bg-emerald-500/85 text-white'
+                            : 'bg-amber-500/85 text-slate-950'
+                        }`}
+                      >
+                        {telemetry.faceDetected ? 'Лицо + Рот' : 'Поиск лица…'}
+                      </span>
+                      {settings.armTracking && (
+                        <span
+                          className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold backdrop-blur-md ${
+                            telemetry.armLDetected || telemetry.armRDetected
+                              ? 'bg-sky-500/85 text-white'
+                              : 'bg-slate-800/80 text-slate-200'
+                          }`}
+                        >
+                          {telemetry.armLDetected && telemetry.armRDetected
+                            ? 'Руки: Л+П'
+                            : telemetry.armLDetected
+                              ? 'Рука: Л'
+                              : telemetry.armRDetected
+                                ? 'Рука: П'
+                                : telemetry.poseReady
+                                  ? 'Покажи руки'
+                                  : 'Загрузка рук…'}
+                        </span>
+                      )}
+                    </div>
                     <button
                       type="button"
                       onClick={onCalibrateWebcam}
-                      className="flex cursor-pointer items-center gap-1 rounded-md bg-slate-900/75 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-md hover:bg-slate-900"
+                      className="flex shrink-0 cursor-pointer items-center gap-1 rounded-md bg-slate-900/75 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-md hover:bg-slate-900"
                     >
                       <Crosshair className="h-3 w-3" />
                       Центр
@@ -582,6 +603,36 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
                 <MeterBar label="Глаз L" value={1 - telemetry.blinkL} color="bg-amber-400" darkUi={darkUi} />
                 <MeterBar label="Глаз R" value={1 - telemetry.blinkR} color="bg-amber-400" darkUi={darkUi} />
                 <MeterBar label="Рот" value={telemetry.mouthOpen} color="bg-rose-500" darkUi={darkUi} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <MeterBar
+                  label="Ширина рта"
+                  value={Math.max(0, Math.min(1, (telemetry.mouthWidth - 0.45) / 0.85))}
+                  color="bg-pink-500"
+                  darkUi={darkUi}
+                />
+                <MeterBar
+                  label="Улыбка"
+                  value={Math.max(0, Math.min(1, (telemetry.mouthSmile + 1) * 0.5))}
+                  color="bg-emerald-500"
+                  darkUi={darkUi}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <MeterBar
+                  label={telemetry.armLDetected ? 'Рука L · ●' : 'Рука L'}
+                  value={telemetry.armLLift}
+                  color={telemetry.armLDetected ? 'bg-sky-500' : 'bg-slate-400'}
+                  darkUi={darkUi}
+                />
+                <MeterBar
+                  label={telemetry.armRDetected ? 'Рука R · ●' : 'Рука R'}
+                  value={telemetry.armRLift}
+                  color={telemetry.armRDetected ? 'bg-violet-500' : 'bg-slate-400'}
+                  darkUi={darkUi}
+                />
               </div>
 
               <div>
@@ -617,6 +668,15 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
                 step={0.05}
                 display={`${Math.round(settings.headSensitivity * 100)}%`}
                 onChange={(v) => onUpdateSettings({ headSensitivity: v })}
+              />
+              <SliderRow
+                label="Чувствительность рук (3D)"
+                value={settings.armSensitivity}
+                min={0.5}
+                max={1.8}
+                step={0.05}
+                display={`${Math.round(settings.armSensitivity * 100)}%`}
+                onChange={(v) => onUpdateSettings({ armSensitivity: v })}
               />
               <SliderRow
                 label="Наклон корпуса"
@@ -658,6 +718,16 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
 
             {/* Tracking Toggles */}
             <div className={`space-y-2 rounded-xl border p-3 ${cardBg}`}>
+              <ToggleRow
+                label="Трекинг рук с камеры (3D)"
+                checked={settings.armTracking}
+                onChange={(v) => onUpdateSettings({ armTracking: v })}
+              />
+              <ToggleRow
+                label="Полная мимика рта (губы + улыбка)"
+                checked={settings.fullMouthTracking}
+                onChange={(v) => onUpdateSettings({ fullMouthTracking: v })}
+              />
               <ToggleRow
                 label="Авто-моргание"
                 checked={settings.autoBlink}

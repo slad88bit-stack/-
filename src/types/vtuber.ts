@@ -67,6 +67,17 @@ export interface TrackingSettings {
   mirrorCamera: boolean;
   eyeTracking: boolean;
   headpatEnabled: boolean;
+  armTracking: boolean;
+  armSensitivity: number; // 0.5 .. 1.8
+  fullMouthTracking: boolean;
+}
+
+export interface ArmDirection3D {
+  x: number;
+  y: number;
+  z: number;
+  detected: boolean;
+  confidence: number;
 }
 
 export interface RawWebcamPose {
@@ -80,11 +91,20 @@ export interface RawWebcamPose {
   gazeX: number;
   gazeY: number;
   jawOpen: number;
-  mouthSmile: number;
-  mouthRound: number;
+  mouthSmile: number; // -1..1
+  mouthWidth: number; // 0.4..1.35 (1 = normal)
+  mouthRound: number; // 0..1
+  mouthShiftX: number; // -1..1
+  mouthSkew: number; // -1..1 (asymmetric smirk)
   browUp: number;
   browDown: number;
   faceDetected: boolean;
+  // Full 3D arm & shoulder tracking from MediaPipe PoseLandmarker
+  armL: ArmDirection3D; // Character's Arm.L (viewer's right, +X)
+  armR: ArmDirection3D; // Character's Arm.R (viewer's left, -X)
+  shoulderRoll: number; // radians
+  poseReady: boolean;
+  poseDetected: boolean;
 }
 
 export interface FaceRenderState {
@@ -100,11 +120,15 @@ export interface FaceRenderState {
   gazeY: number;
   mouthOpen: number;
   mouthSmile: number;
+  mouthWidth: number;
   mouthRound: number;
+  mouthShiftX: number;
+  mouthSkew: number;
   browUp: number;
   browDown: number;
   blushIntensity: number;
   isLipSyncActive: boolean;
+  isFullMouthTracked: boolean;
   time: number;
 }
 
@@ -115,9 +139,16 @@ export interface TelemetrySnapshot {
   blinkL: number;
   blinkR: number;
   mouthOpen: number;
+  mouthWidth: number;
+  mouthSmile: number;
   audioLevel: number;
   isTalking: boolean;
   faceDetected: boolean;
+  armLDetected: boolean;
+  armRDetected: boolean;
+  armLLift: number; // 0..1 visual lift indicator
+  armRLift: number; // 0..1 visual lift indicator
+  poseReady: boolean;
   fps: number;
   spectrum: number[];
 }
@@ -538,4 +569,7 @@ export const DEFAULT_TRACKING_SETTINGS: TrackingSettings = {
   mirrorCamera: true,
   eyeTracking: true,
   headpatEnabled: true,
+  armTracking: true,
+  armSensitivity: 1.15,
+  fullMouthTracking: true,
 };

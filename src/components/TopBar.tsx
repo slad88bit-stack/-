@@ -6,8 +6,10 @@ import {
   Hand,
   Heart,
   Loader2,
+  Maximize2,
   Mic,
   MicOff,
+  Minimize2,
   MousePointer2,
   Palette,
   Repeat2,
@@ -37,6 +39,7 @@ interface TopBarProps {
   drawerOpen: boolean;
   isCustomizerActive: boolean;
   isHairEditorActive: boolean;
+  isFullscreen: boolean;
   darkUi: boolean;
   telemetry: TelemetrySnapshot;
   onSelectCharacter: (id: CharacterId) => void;
@@ -48,6 +51,7 @@ interface TopBarProps {
   onToggleDemoSpeech: () => void;
   onHeadpat: () => void;
   onSnapshot: () => void;
+  onToggleFullscreen: () => void;
   onEnterObsMode: () => void;
   onOpenCustomizer: () => void;
   onOpenHairEditor: () => void;
@@ -66,6 +70,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   drawerOpen,
   isCustomizerActive,
   isHairEditorActive,
+  isFullscreen,
   darkUi,
   telemetry,
   onSelectCharacter,
@@ -77,6 +82,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onToggleDemoSpeech,
   onHeadpat,
   onSnapshot,
+  onToggleFullscreen,
   onEnterObsMode,
   onOpenCustomizer,
   onOpenHairEditor,
@@ -133,7 +139,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             : 'bg-amber-400';
 
   return (
-    <header className="pointer-events-none fixed inset-x-0 top-0 z-30 flex flex-wrap items-center justify-between gap-2 px-3 py-3 sm:flex-nowrap sm:px-4">
+    <header className="pointer-events-none fixed inset-x-0 top-0 z-30 flex flex-wrap items-center justify-between gap-1.5 px-2 py-2 lg:flex-nowrap lg:gap-2 lg:px-4 lg:py-3">
       {/* Left Brand + 3-Character Quick Roster Switcher */}
       <div className={`pointer-events-auto flex items-center gap-2 rounded-2xl p-1.5 pl-2.5 ${panelClass}`}>
         <div className="hidden items-center gap-2 pr-1 lg:flex">
@@ -383,6 +389,17 @@ export const TopBar: React.FC<TopBarProps> = ({
           className={`flex cursor-pointer items-center gap-1 rounded-xl px-2 py-1.5 text-xs font-semibold transition-all ${idleBtn}`}
         >
           <Camera className="h-3.5 w-3.5" />
+        </button>
+
+        <button
+          type="button"
+          onClick={onToggleFullscreen}
+          title={isFullscreen ? 'Выйти из полноэкранного режима' : 'Во весь экран (F)'}
+          className={`flex cursor-pointer items-center gap-1 rounded-xl px-2 py-1.5 text-xs font-semibold transition-all ${
+            isFullscreen ? 'bg-[#0648a6] text-white shadow-sm' : idleBtn
+          }`}
+        >
+          {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
         </button>
 
         <button

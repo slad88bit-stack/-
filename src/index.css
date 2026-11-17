@@ -111,3 +111,12 @@ input[type='range'].studio-slider::-moz-range-thumb {
 .studio-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(24, 32, 44, 0.3);
 }
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

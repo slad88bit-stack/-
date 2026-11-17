@@ -151,6 +151,7 @@ export const App: React.FC = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<DrawerTab>('customizer');
   const [obsMode, setObsMode] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<TelemetrySnapshot>(INITIAL_TELEMETRY);
 
@@ -754,6 +755,24 @@ export const App: React.FC = () => {
     setSettings((prev) => ({ ...prev, ...patch }));
   }, []);
 
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  const handleToggleFullscreen = useCallback(async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch {
+      showToast('Включи «Fullscreen button» в настройках страницы itch.io', 3200);
+    }
+  }, [showToast]);
+
   const handleOpenCustomizer = useCallback(() => {
     if (drawerOpen && drawerTab === 'customizer') {
       setDrawerOpen(false);
@@ -820,6 +839,7 @@ export const App: React.FC = () => {
             drawerOpen={drawerOpen}
             isCustomizerActive={drawerOpen && drawerTab === 'customizer'}
             isHairEditorActive={drawerOpen && drawerTab === 'hair'}
+            isFullscreen={isFullscreen}
             darkUi={darkUi}
             telemetry={telemetry}
             onSelectCharacter={handleSelectCharacter}
@@ -831,6 +851,7 @@ export const App: React.FC = () => {
             onToggleDemoSpeech={handleToggleDemoSpeech}
             onHeadpat={handleHeadpat}
             onSnapshot={handleSnapshot}
+            onToggleFullscreen={() => void handleToggleFullscreen()}
             onEnterObsMode={() => {
               setObsMode(true);
               showToast('OBS режим активен · нажми H или Esc, чтобы вернуть интерфейс', 3000);

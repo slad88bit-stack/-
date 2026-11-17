@@ -46,6 +46,9 @@ const INITIAL_TELEMETRY: TelemetrySnapshot = {
   armLLift: 0,
   armRLift: 0,
   poseReady: false,
+  handReady: false,
+  handsCount: 0,
+  armError: null,
   fps: 60,
   spectrum: new Array<number>(16).fill(0),
 };
@@ -513,6 +516,12 @@ export const App: React.FC = () => {
     stageRef.current?.triggerHeadpat();
   }, []);
 
+  const handleTestArms = useCallback(() => {
+    setAnimationMode('live');
+    stageRef.current?.triggerArmWaveTest();
+    showToast('Тест рук: персонаж машет обеими руками!');
+  }, [showToast]);
+
   const handleSnapshot = useCallback(() => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -641,6 +650,7 @@ export const App: React.FC = () => {
             onAttachPreviewCanvas={handleAttachPreviewCanvas}
             onCalibrateWebcam={handleCalibrateWebcam}
             onToggleWebcam={() => void handleToggleWebcam()}
+            onTestArms={handleTestArms}
             onUpdateSettings={handleUpdateSettings}
             onSelectBackground={setBackground}
             onSelectCameraPreset={handleCameraPreset}

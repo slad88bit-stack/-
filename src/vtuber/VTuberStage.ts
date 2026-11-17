@@ -349,6 +349,10 @@ export class VTuberStage {
   private lastArmLDetected = false;
   private lastArmRDetected = false;
   private lastPoseReady = false;
+  private lastHandReady = false;
+  private lastHandsCount = 0;
+  private lastArmError: string | null = null;
+  private armTestTimer = 0;
 
   // Pointer & interaction
   private pointerNdc = new THREE.Vector2(0, 0);
@@ -1047,6 +1051,14 @@ export class VTuberStage {
     this.callbacks.onHeadpat?.();
   }
 
+  public triggerArmWaveTest(): void {
+    this.armTestTimer = 2.6;
+    if (this.animationMode !== 'live') {
+      this.setAnimationMode('live');
+      this.callbacks.onAnimationChange?.('live');
+    }
+  }
+
   public captureTransparentPNG(): string {
     const prevBg = this.scene.background;
     const prevStageVisible = this.stageGroup.visible;
@@ -1239,12 +1251,19 @@ export class VTuberStage {
       }
     }
 
-    // Smoothly track 3D arm target vectors from PoseLandmarker (or Demo Speech conversational gestures)
+    // Smoothly track 3D arm target vectors from Hand + Pose trackers (or Arm Test / Demo Speech)
     this.lastPoseReady = Boolean(camPose?.poseReady);
+    this.lastHandReady = Boolean(camPose?.handReady);
+    this.lastHandsCount = camPose?.handsCount ?? 0;
+    this.lastArmError = camPose?.armError ?? null;
     this.lastArmLDetected = false;
     this.lastArmRDetected = false;
 
-    const armLambda = THREE.MathUtils.lerp(24, 7.5, clamp(this.settings.smoothing, 0.05, 0.95));
+    if (this.armTestTimer > 0) {
+      this.armTestTimer = Math.max(0, this.armTestTimer - dt);
+    }
+
+    const armLambda = THREE.MathUtils.lerp(24, 8.5, clamp(this.settings.smoothing, 0.05, 0.95));
     const armAlpha = 1 - Math.exp(-armLambda * dt);
     const armSens = this.settings.armSensitivity;
 
@@ -1252,24 +1271,51 @@ export class VTuberStage {
       side: 'L' | 'R',
       curDir: THREE.Vector3,
       raw: { x: number; y: number; z: number; detected: boolean } | null,
-      demoDir: THREE.Vector3 | null,
+      overrideDir: THREE.Vector3 | null,
     ): number => {
-      const restX = side === 'L' ? 0.5 : -0.5;
+      const sign = side === 'L' ? 1 : -1;
+      const restX = sign * 0.5;
       const restY = -0.866;
 
+      if (overrideDir) {
+        curDir.lerp(overrideDir, 1 - Math.exp(-12 * dt)).normalize();
+        return 1;
+      }
+
       if (raw && raw.detected && this.settings.armTracking) {
-        // Amplify arm movement smoothly around rest pose using armSensitivity
         let tx = restX + (raw.x - restX) * armSens;
         let ty = restY + (raw.y - restY) * armSens;
         let tz = raw.z * armSens;
 
-        // Prevent arm from clipping inside torso when crossing inward across chest
-        if (side === 'L' && tx < 0.16) {
-          tz = Math.max(tz, 0.34);
-        } else if (side === 'R' && tx > -0.16) {
-          tz = Math.max(tz, 0.34);
+        // CRITICAL: Baby's head is 0.78m wide (x in [-0.39, +0.39], y >= 0.71, z in [-0.35, +0.35])
+        // while shoulders sit at x = +-0.24, y = 0.62!
+        // When arm lifts upward (ty > -0.15), flare outward & slightly forward so the raised arm
+        // proudly clears the giant blocky head instead of disappearing inside it!
+        const liftFactor = clamp((ty + 0.15) / 1.05, 0, 1);
+        if (liftFactor > 0.05) {
+          if (side === 'L') {
+            if (tx < 0.2) {
+              // Crossing inward in front of chest/face -> push clearly forward past the face
+              tz = Math.max(tz, 0.52);
+            } else {
+              // Raising on own side -> flare outward past head width (x > 0.39)
+              tx = Math.max(tx, 0.56 * liftFactor);
+              tz = Math.max(tz, 0.24 * liftFactor);
+            }
+          } else {
+            if (tx > -0.2) {
+              tz = Math.max(tz, 0.52);
+            } else {
+              tx = Math.min(tx, -0.56 * liftFactor);
+              tz = Math.max(tz, 0.24 * liftFactor);
+            }
+          }
+        } else {
+          // Lower chest cross anti-clipping
+          if (side === 'L' && tx < 0.16) tz = Math.max(tz, 0.36);
+          else if (side === 'R' && tx > -0.16) tz = Math.max(tz, 0.36);
         }
-        // Keep arm mostly in natural front/side hemisphere
+
         tz = clamp(tz, -0.35, 0.95);
 
         this.tmpVecA.set(tx, ty, tz);
@@ -1280,37 +1326,36 @@ export class VTuberStage {
         return 1;
       }
 
-      if (demoDir) {
-        curDir.lerp(demoDir, 1 - Math.exp(-9 * dt)).normalize();
-        return 0.85;
-      }
-
       // Gently drift back toward rest vector when untracked
       this.tmpVecA.set(restX, restY, 0);
       curDir.lerp(this.tmpVecA, 1 - Math.exp(-6 * dt)).normalize();
       return 0;
     };
 
-    let demoArmL: THREE.Vector3 | null = null;
-    let demoArmR: THREE.Vector3 | null = null;
-    if (demoSample && !webcamActive) {
+    let overrideArmL: THREE.Vector3 | null = null;
+    let overrideArmR: THREE.Vector3 | null = null;
+    if (this.armTestTimer > 0) {
+      const wave = Math.sin(this.elapsed * 11) * 0.22;
+      overrideArmL = new THREE.Vector3(0.62 + wave, 0.78, 0.32).normalize();
+      overrideArmR = new THREE.Vector3(-0.62 + wave, 0.78, 0.32).normalize();
+    } else if (demoSample && !webcamActive) {
       const talk = demoSample.audioLevel;
-      demoArmL = new THREE.Vector3(
-        0.58 + Math.sin(this.elapsed * 3.1) * 0.25,
-        -0.45 + talk * 0.78 + Math.sin(this.elapsed * 5.4) * 0.22,
-        0.28 + talk * 0.42,
+      overrideArmL = new THREE.Vector3(
+        0.68 + Math.sin(this.elapsed * 3.1) * 0.22,
+        -0.25 + talk * 0.95 + Math.sin(this.elapsed * 5.4) * 0.24,
+        0.32 + talk * 0.38,
       ).normalize();
-      demoArmR = new THREE.Vector3(
-        -0.58 + Math.cos(this.elapsed * 2.7) * 0.22,
-        -0.5 + talk * 0.68 + Math.cos(this.elapsed * 4.8) * 0.2,
-        0.24 + talk * 0.36,
+      overrideArmR = new THREE.Vector3(
+        -0.68 + Math.cos(this.elapsed * 2.7) * 0.22,
+        -0.30 + talk * 0.85 + Math.cos(this.elapsed * 4.8) * 0.22,
+        0.28 + talk * 0.35,
       ).normalize();
     }
 
-    const wantBlendL = updateArmTarget('L', this.curArmDirL, camPose?.armL ?? null, demoArmL);
-    const wantBlendR = updateArmTarget('R', this.curArmDirR, camPose?.armR ?? null, demoArmR);
-    this.curArmBlendL = damp(this.curArmBlendL, wantBlendL, wantBlendL > this.curArmBlendL ? 11 : 5, dt);
-    this.curArmBlendR = damp(this.curArmBlendR, wantBlendR, wantBlendR > this.curArmBlendR ? 11 : 5, dt);
+    const wantBlendL = updateArmTarget('L', this.curArmDirL, camPose?.armL ?? null, overrideArmL);
+    const wantBlendR = updateArmTarget('R', this.curArmDirR, camPose?.armR ?? null, overrideArmR);
+    this.curArmBlendL = damp(this.curArmBlendL, wantBlendL, wantBlendL > this.curArmBlendL ? 14 : 5, dt);
+    this.curArmBlendR = damp(this.curArmBlendR, wantBlendR, wantBlendR > this.curArmBlendR ? 14 : 5, dt);
     this.lastArmLDetected = Boolean(camPose?.armL.detected && this.settings.armTracking);
     this.lastArmRDetected = Boolean(camPose?.armR.detected && this.settings.armTracking);
 
@@ -1458,6 +1503,9 @@ export class VTuberStage {
         armLLift: clamp((this.curArmDirL.y + 0.9) / 1.85, 0, 1),
         armRLift: clamp((this.curArmDirR.y + 0.9) / 1.85, 0, 1),
         poseReady: this.lastPoseReady,
+        handReady: this.lastHandReady,
+        handsCount: this.lastHandsCount,
+        armError: this.lastArmError,
         fps: this.currentFps,
         spectrum,
       });
@@ -1626,6 +1674,14 @@ export class VTuberStage {
         this.tmpArmQuat.setFromUnitVectors(this.tmpVecB, this.curArmDirL);
         this.tmpTargetQuat.copy(this.tmpArmQuat).multiply(armLRest.quaternion);
         armL.quaternion.slerp(this.tmpTargetQuat, this.curArmBlendL);
+
+        // Shift shoulder slightly outward & forward as arm lifts so it cleanly clears the wide head
+        const liftL = clamp((this.curArmDirL.y + 0.25) / 1.15, 0, 1) * this.curArmBlendL;
+        armL.position.set(
+          armLRest.position.x + liftL * 0.11,
+          armLRest.position.y + liftL * 0.04,
+          armLRest.position.z + liftL * 0.10,
+        );
       }
       armL.scale.copy(armLRest.scale);
     }
@@ -1645,6 +1701,13 @@ export class VTuberStage {
         this.tmpArmQuat.setFromUnitVectors(this.tmpVecB, this.curArmDirR);
         this.tmpTargetQuat.copy(this.tmpArmQuat).multiply(armRRest.quaternion);
         armR.quaternion.slerp(this.tmpTargetQuat, this.curArmBlendR);
+
+        const liftR = clamp((this.curArmDirR.y + 0.25) / 1.15, 0, 1) * this.curArmBlendR;
+        armR.position.set(
+          armRRest.position.x - liftR * 0.11,
+          armRRest.position.y + liftR * 0.04,
+          armRRest.position.z + liftR * 0.10,
+        );
       }
       armR.scale.copy(armRRest.scale);
     }

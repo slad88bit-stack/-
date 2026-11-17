@@ -58,6 +58,7 @@ interface StudioDrawerProps {
   onAttachPreviewCanvas: (canvas: HTMLCanvasElement | null) => void;
   onCalibrateWebcam: () => void;
   onToggleWebcam: () => void;
+  onTestArms: () => void;
   onUpdateSettings: (patch: Partial<TrackingSettings>) => void;
   onSelectBackground: (bg: BackgroundId) => void;
   onSelectCameraPreset: (preset: CameraPresetId) => void;
@@ -132,6 +133,7 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
   onAttachPreviewCanvas,
   onCalibrateWebcam,
   onToggleWebcam,
+  onTestArms,
   onUpdateSettings,
   onSelectBackground,
   onSelectCameraPreset,
@@ -560,7 +562,9 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
                           className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold backdrop-blur-md ${
                             telemetry.armLDetected || telemetry.armRDetected
                               ? 'bg-sky-500/85 text-white'
-                              : 'bg-slate-800/80 text-slate-200'
+                              : telemetry.armError
+                                ? 'bg-rose-500/85 text-white'
+                                : 'bg-slate-800/80 text-slate-200'
                           }`}
                         >
                           {telemetry.armLDetected && telemetry.armRDetected
@@ -569,9 +573,11 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
                               ? 'Рука: Л'
                               : telemetry.armRDetected
                                 ? 'Рука: П'
-                                : telemetry.poseReady
-                                  ? 'Покажи руки'
-                                  : 'Загрузка рук…'}
+                                : telemetry.armError
+                                  ? 'Ошибка рук'
+                                  : telemetry.handReady || telemetry.poseReady
+                                    ? 'Покажи руки'
+                                    : 'Загрузка рук…'}
                         </span>
                       )}
                     </div>
@@ -586,7 +592,41 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
                   </div>
                 )}
               </div>
+              {webcamStatus === 'active' && settings.armTracking && (
+                <div
+                  className={`flex items-center justify-between gap-2 border-t px-2.5 py-1.5 text-[10px] ${
+                    darkUi ? 'border-white/10 text-slate-300' : 'border-slate-900/8 text-slate-600'
+                  }`}
+                >
+                  <span>
+                    Кисти: {telemetry.handReady ? `✓ (${telemetry.handsCount})` : '⏳'} · Поза:{' '}
+                    {telemetry.poseReady ? '✓' : '⏳'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onTestArms}
+                    className="cursor-pointer rounded-md bg-sky-500/15 px-2 py-0.5 font-semibold text-sky-600 hover:bg-sky-500/25 dark:text-sky-300"
+                  >
+                    Тест рук 🙋
+                  </button>
+                </div>
+              )}
+              {telemetry.armError && (
+                <div className="border-t border-rose-500/25 bg-rose-500/10 px-2.5 py-1.5 text-[10px] text-rose-600 dark:text-rose-300">
+                  {telemetry.armError}
+                </div>
+              )}
             </div>
+
+            {webcamStatus !== 'active' && (
+              <button
+                type="button"
+                onClick={onTestArms}
+                className={`flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold transition-all ${cardBg} hover:border-sky-500/40`}
+              >
+                🙋 Тест поднятия рук (проверка 3D-рига)
+              </button>
+            )}
 
             {/* Live Telemetry & Voice Spectrum */}
             <div className={`space-y-2.5 rounded-xl border p-3 ${cardBg}`}>

@@ -104,7 +104,10 @@ export interface RawWebcamPose {
   armR: ArmDirection3D; // Character's Arm.R (viewer's left, -X)
   shoulderRoll: number; // radians
   poseReady: boolean;
+  handReady: boolean;
   poseDetected: boolean;
+  handsCount: number;
+  armError: string | null;
 }
 
 export interface FaceRenderState {
@@ -149,6 +152,9 @@ export interface TelemetrySnapshot {
   armLLift: number; // 0..1 visual lift indicator
   armRLift: number; // 0..1 visual lift indicator
   poseReady: boolean;
+  handReady: boolean;
+  handsCount: number;
+  armError: string | null;
   fps: number;
   spectrum: number[];
 }

@@ -62,7 +62,10 @@ const EMPTY_POSE: RawWebcamPose = {
   armR: { ...REST_ARM_R },
   shoulderRoll: 0,
   poseReady: false,
+  handReady: false,
   poseDetected: false,
+  handsCount: 0,
+  armError: null,
 };
 
 function clamp(v: number, min: number, max: number): number {
@@ -87,14 +90,25 @@ function normalizeArm(dx: number, dy: number, dz: number, confidence: number): A
   };
 }
 
+function lmVis(pt: { visibility?: number; presence?: number } | undefined): number {
+  if (!pt) return 0;
+  return Math.max(pt.visibility ?? 0, pt.presence ?? 0);
+}
+
 export class WebcamTracker {
   private faceLandmarker: FaceLandmarker | null = null;
   private poseLandmarker: PoseLandmarker | null = null;
   private handLandmarker: HandLandmarker | null = null;
   private auxLoadStarted = false;
+  private armError: string | null = null;
+
   private video: HTMLVideoElement | null = null;
   private stream: MediaStream | null = null;
   private previewCanvas: HTMLCanvasElement | null = null;
+  // Clean unmirrored 320x240 pixel buffer fed to Hand & Pose trackers (avoids multi-WebGL2 video upload glitches!)
+  private frameCanvas: HTMLCanvasElement | null = null;
+  private frameCtx: CanvasRenderingContext2D | null = null;
+
   private active = false;
   private lastVideoTime = -1;
   private lastFaceTs = 0;
@@ -168,59 +182,72 @@ export class WebcamTracker {
     }
   }
 
-  private async createPoseLandmarker(
-    vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>,
-  ): Promise<PoseLandmarker | null> {
-    for (const delegate of ['GPU', 'CPU'] as const) {
-      try {
-        return await PoseLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: POSE_MODEL_URL, delegate },
-          runningMode: 'VIDEO',
-          numPoses: 1,
-          minPoseDetectionConfidence: 0.3,
-          minPosePresenceConfidence: 0.3,
-          minTrackingConfidence: 0.3,
-        });
-      } catch (err) {
-        console.warn(`[VTuber] PoseLandmarker (${delegate}) init failed:`, err);
-      }
-    }
-    return null;
-  }
-
+  // Use CPU delegate FIRST for Hand & Pose so we don't starve WebGL2 contexts alongside Three.js + FaceLandmarker!
   private async createHandLandmarker(
     vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>,
   ): Promise<HandLandmarker | null> {
-    for (const delegate of ['GPU', 'CPU'] as const) {
+    let lastErr = '';
+    for (const delegate of ['CPU', 'GPU'] as const) {
       try {
         return await HandLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate },
           runningMode: 'VIDEO',
           numHands: 2,
-          minHandDetectionConfidence: 0.35,
-          minHandPresenceConfidence: 0.35,
-          minTrackingConfidence: 0.35,
+          minHandDetectionConfidence: 0.3,
+          minHandPresenceConfidence: 0.3,
+          minTrackingConfidence: 0.3,
         });
       } catch (err) {
+        lastErr = err instanceof Error ? err.message : String(err);
         console.warn(`[VTuber] HandLandmarker (${delegate}) init failed:`, err);
       }
+    }
+    this.armError = `Кисти: ${lastErr}`;
+    return null;
+  }
+
+  private async createPoseLandmarker(
+    vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>,
+  ): Promise<PoseLandmarker | null> {
+    let lastErr = '';
+    for (const delegate of ['CPU', 'GPU'] as const) {
+      try {
+        return await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: POSE_MODEL_URL, delegate },
+          runningMode: 'VIDEO',
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.25,
+          minPosePresenceConfidence: 0.25,
+          minTrackingConfidence: 0.25,
+        });
+      } catch (err) {
+        lastErr = err instanceof Error ? err.message : String(err);
+        console.warn(`[VTuber] PoseLandmarker (${delegate}) init failed:`, err);
+      }
+    }
+    if (!this.handLandmarker) {
+      this.armError = `Поза: ${lastErr}`;
     }
     return null;
   }
 
   // IMPORTANT: @mediapipe/tasks-vision uses global self.ModuleFactory during creation,
-  // so FaceLandmarker, PoseLandmarker and HandLandmarker MUST be initialized strictly sequentially!
+  // so FaceLandmarker -> HandLandmarker -> PoseLandmarker MUST initialize strictly sequentially!
   private async loadAuxTrackersSequentially(
     vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>,
   ): Promise<void> {
     if (this.auxLoadStarted) return;
     this.auxLoadStarted = true;
+    this.armError = null;
     try {
+      if (!this.handLandmarker) {
+        this.handLandmarker = await this.createHandLandmarker(vision);
+      }
       if (!this.poseLandmarker) {
         this.poseLandmarker = await this.createPoseLandmarker(vision);
       }
-      if (!this.handLandmarker) {
-        this.handLandmarker = await this.createHandLandmarker(vision);
+      if (this.handLandmarker || this.poseLandmarker) {
+        this.armError = null;
       }
     } finally {
       this.auxLoadStarted = false;
@@ -249,6 +276,13 @@ export class WebcamTracker {
     video.muted = true;
     await video.play();
 
+    if (!this.frameCanvas) {
+      this.frameCanvas = document.createElement('canvas');
+      this.frameCanvas.width = 320;
+      this.frameCanvas.height = 240;
+      this.frameCtx = this.frameCanvas.getContext('2d', { willReadFrequently: true });
+    }
+
     let vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>;
     try {
       vision = await FilesetResolver.forVisionTasks('/mediapipe/wasm');
@@ -270,7 +304,7 @@ export class WebcamTracker {
     this.calibrated = false;
     this.active = true;
 
-    // Load Pose + Hand trackers strictly AFTER FaceLandmarker has finished touching self.ModuleFactory!
+    // Load Hand -> Pose sequentially AFTER FaceLandmarker finished touching self.ModuleFactory
     void this.loadAuxTrackersSequentially(vision);
   }
 
@@ -288,7 +322,9 @@ export class WebcamTracker {
       ...EMPTY_POSE,
       armL: { ...REST_ARM_L },
       armR: { ...REST_ARM_R },
-      poseReady: Boolean(this.poseLandmarker || this.handLandmarker),
+      poseReady: Boolean(this.poseLandmarker),
+      handReady: Boolean(this.handLandmarker),
+      armError: this.armError,
     };
     if (this.previewCanvas) {
       const ctx = this.previewCanvas.getContext('2d');
@@ -306,8 +342,19 @@ export class WebcamTracker {
     }
     this.lastVideoTime = this.video.currentTime;
 
-    const nowMs = Math.max(performance.now(), this.lastFaceTs + 1);
+    const nowMs = Math.max(Math.floor(performance.now()), this.lastFaceTs + 1);
     this.lastFaceTs = nowMs;
+
+    // Snapshot clean unmirrored 320x240 pixel buffer for Hand & Pose detectors
+    let auxSource: HTMLCanvasElement | HTMLVideoElement = this.video;
+    if (this.frameCanvas && this.frameCtx && this.video.videoWidth > 0 && this.video.videoHeight > 0) {
+      const targetH = Math.round((320 * this.video.videoHeight) / this.video.videoWidth);
+      if (this.frameCanvas.height !== targetH && targetH >= 120 && targetH <= 480) {
+        this.frameCanvas.height = targetH;
+      }
+      this.frameCtx.drawImage(this.video, 0, 0, this.frameCanvas.width, this.frameCanvas.height);
+      auxSource = this.frameCanvas;
+    }
 
     let faceResult: FaceLandmarkerResult | null = null;
     try {
@@ -316,25 +363,27 @@ export class WebcamTracker {
       return this.latestPose;
     }
 
-    let poseResult: PoseLandmarkerResult | null = null;
-    if (trackArms && this.poseLandmarker) {
-      const poseTs = Math.max(nowMs, this.lastPoseTs + 1);
-      this.lastPoseTs = poseTs;
-      try {
-        poseResult = this.poseLandmarker.detectForVideo(this.video, poseTs);
-      } catch {
-        poseResult = null;
-      }
-    }
-
     let handResult: HandLandmarkerResult | null = null;
     if (trackArms && this.handLandmarker) {
       const handTs = Math.max(nowMs, this.lastHandTs + 1);
       this.lastHandTs = handTs;
       try {
-        handResult = this.handLandmarker.detectForVideo(this.video, handTs);
-      } catch {
+        handResult = this.handLandmarker.detectForVideo(auxSource, handTs);
+      } catch (err) {
+        console.warn('[VTuber] Hand detect error:', err);
         handResult = null;
+      }
+    }
+
+    let poseResult: PoseLandmarkerResult | null = null;
+    if (trackArms && this.poseLandmarker) {
+      const poseTs = Math.max(nowMs, this.lastPoseTs + 1);
+      this.lastPoseTs = poseTs;
+      try {
+        poseResult = this.poseLandmarker.detectForVideo(auxSource, poseTs);
+      } catch (err) {
+        console.warn('[VTuber] Pose detect error:', err);
+        poseResult = null;
       }
     }
 
@@ -362,7 +411,7 @@ export class WebcamTracker {
     let browUp = this.latestPose.browUp;
     let browDown = this.latestPose.browDown;
 
-    // Face bounding reference for close-up shoulder estimation when Pose shoulders are below frame
+    // Face bounding box for estimating shoulders even in close-up webcam framing
     let faceCenterX = 0.5;
     let faceChinY = 0.58;
     let faceW = 0.22;
@@ -483,28 +532,42 @@ export class WebcamTracker {
       browDown = clamp(((get('browDownLeft') + get('browDownRight')) * 0.5) * 1.5, 0, 1);
     }
 
-    // 2. Parse Full 3D Arms & Shoulders (Fusing PoseLandmarker + HandLandmarker!)
+    // 2. Parse Full 3D Arms & Shoulders (Pixel-accurate Pose 2D+Z fused with HandLandmarker!)
     let userLeftArm: ArmDirection3D = { x: 0, y: -1, z: 0, detected: false, confidence: 0 };
     let userRightArm: ArmDirection3D = { x: 0, y: -1, z: 0, detected: false, confidence: 0 };
     let shoulderRoll = 0;
     let poseDetected = false;
 
     const pLm = poseResult?.landmarks?.[0];
-    const wLm = poseResult?.worldLandmarks?.[0];
     const videoAspect = (this.video.videoWidth || 640) / Math.max(1, this.video.videoHeight || 480);
 
-    // Shoulder anchors in normalized raw image coords (raw image left = user's RIGHT, raw image right = user's LEFT)
-    let userRightShoulder = { x: clamp(faceCenterX - faceW * 1.15, 0.05, 0.9), y: clamp(faceChinY + faceH * 0.42, 0.3, 1.05) };
-    let userLeftShoulder = { x: clamp(faceCenterX + faceW * 1.15, 0.1, 0.95), y: clamp(faceChinY + faceH * 0.42, 0.3, 1.05) };
+    // Default shoulder anchors estimated from face (raw-image left = userRight, raw-image right = userLeft)
+    let userRightShoulder = {
+      x: clamp(faceCenterX - faceW * 1.05, 0.06, 0.88),
+      y: clamp(faceChinY + faceH * 0.45, 0.35, 1.02),
+    };
+    let userLeftShoulder = {
+      x: clamp(faceCenterX + faceW * 1.05, 0.12, 0.94),
+      y: clamp(faceChinY + faceH * 0.45, 0.35, 1.02),
+    };
 
     if (trackArms && pLm && pLm.length >= 21) {
       poseDetected = true;
-      const src = wLm && wLm.length >= 21 ? wLm : pLm;
+      // Check if PoseLandmarker populates visibility/presence at all
+      const hasScores = lmVis(pLm[11]) > 0.01 || lmVis(pLm[12]) > 0.01 || lmVis(pLm[0]) > 0.01;
 
-      if ((pLm[11].visibility ?? 0) > 0.25) {
+      const isVisible = (idx: number, minScore: number) => {
+        const pt = pLm[idx];
+        if (!pt) return false;
+        const inFrame = pt.x > -0.2 && pt.x < 1.2 && pt.y > -0.2 && pt.y < 1.25;
+        if (!hasScores) return inFrame;
+        return inFrame && lmVis(pt) >= minScore;
+      };
+
+      if (isVisible(11, 0.2)) {
         userLeftShoulder = { x: pLm[11].x, y: pLm[11].y };
       }
-      if ((pLm[12].visibility ?? 0) > 0.25) {
+      if (isVisible(12, 0.2)) {
         userRightShoulder = { x: pLm[12].x, y: pLm[12].y };
       }
 
@@ -514,74 +577,66 @@ export class WebcamTracker {
         wristIdx: number,
         indexIdx: number,
       ): ArmDirection3D => {
-        const sNorm = pLm[shoulderIdx];
-        const eNorm = pLm[elbowIdx];
-        const wNorm = pLm[wristIdx];
-        const iNorm = pLm[indexIdx];
+        const sOk = isVisible(shoulderIdx, 0.18);
+        const eOk = isVisible(elbowIdx, 0.18);
+        const wOk = isVisible(wristIdx, 0.20);
 
-        const sVis = sNorm.visibility ?? 1;
-        const eVis = eNorm.visibility ?? 0;
-        const wVis = wNorm.visibility ?? 0;
-
-        const elbowInView = eVis > 0.22 && eNorm.y < 1.3 && eNorm.x > -0.3 && eNorm.x < 1.3;
-        const wristInView = wVis > 0.24 && wNorm.y < 1.25 && wNorm.x > -0.25 && wNorm.x < 1.25;
-
-        if (sVis < 0.2 || (!elbowInView && !wristInView)) {
+        if (!sOk || (!eOk && !wOk)) {
           return { x: 0, y: -1, z: 0, detected: false, confidence: 0 };
         }
 
-        const s = src[shoulderIdx];
-        const e = src[elbowIdx];
-        const w = src[wristIdx];
-        const idxFinger = src[indexIdx];
+        const s = pLm[shoulderIdx];
+        const e = pLm[elbowIdx];
+        const w = pLm[wristIdx];
+        const idxFinger = pLm[indexIdx];
 
-        let vx = 0;
-        let vy = 0;
-        let vz = 0;
+        // Use pixel-accurate normalized image coords (immune to hip-hallucinated worldLandmarks!)
+        let targetX = e.x;
+        let targetY = e.y;
+        let targetZ = e.z;
 
-        if (wristInView) {
-          const useHand = (iNorm.visibility ?? 0) > 0.28;
-          const handX = useHand ? w.x * 0.72 + idxFinger.x * 0.28 : w.x;
-          const handY = useHand ? w.y * 0.72 + idxFinger.y * 0.28 : w.y;
-          const handZ = useHand ? w.z * 0.72 + idxFinger.z * 0.28 : w.z;
+        if (wOk) {
+          const useIdx = isVisible(indexIdx, 0.25);
+          const handX = useIdx ? w.x * 0.72 + idxFinger.x * 0.28 : w.x;
+          const handY = useIdx ? w.y * 0.72 + idxFinger.y * 0.28 : w.y;
+          const handZ = useIdx ? w.z * 0.72 + idxFinger.z * 0.28 : w.z;
 
-          if (elbowInView) {
-            vx = (e.x - s.x) * 0.25 + (handX - s.x) * 0.75;
-            vy = (e.y - s.y) * 0.25 + (handY - s.y) * 0.75;
-            vz = (e.z - s.z) * 0.25 + (handZ - s.z) * 0.75;
+          if (eOk) {
+            targetX = e.x * 0.2 + handX * 0.8;
+            targetY = e.y * 0.2 + handY * 0.8;
+            targetZ = e.z * 0.2 + handZ * 0.8;
           } else {
-            vx = handX - s.x;
-            vy = handY - s.y;
-            vz = handZ - s.z;
+            targetX = handX;
+            targetY = handY;
+            targetZ = handZ;
           }
-        } else {
-          vx = e.x - s.x;
-          vy = e.y - s.y;
-          vz = e.z - s.z;
         }
+
+        const vx = (targetX - s.x) * videoAspect;
+        const vy = targetY - s.y;
+        const vz = targetZ - s.z;
 
         const dx = mirror ? -vx : vx;
         const dy = -vy;
-        const dz = clamp(-vz * 0.7, -0.45, 0.92);
-        return normalizeArm(dx, dy, dz, wristInView ? wVis : eVis);
+        const dz = clamp(-vz * 0.55, -0.35, 0.72);
+        return normalizeArm(dx, dy, dz, Math.max(0.5, lmVis(wOk ? w : e)));
       };
 
       userLeftArm = buildPoseArm(11, 13, 15, 19);
       userRightArm = buildPoseArm(12, 14, 16, 20);
 
-      const shL = pLm[11];
-      const shR = pLm[12];
-      if ((shL.visibility ?? 0) > 0.35 && (shR.visibility ?? 0) > 0.35) {
-        const sdx = shL.x - shR.x;
-        const sdy = shL.y - shR.y;
+      if (isVisible(11, 0.3) && isVisible(12, 0.3)) {
+        const sdx = pLm[11].x - pLm[12].x;
+        const sdy = pLm[11].y - pLm[12].y;
         const rawTilt = Math.atan2(sdy, Math.abs(sdx) + 1e-4);
         shoulderRoll = clamp(rawTilt * (mirror ? 1 : -1), -0.45, 0.45);
       }
     }
 
-    // 3. Fuse HandLandmarker (instant close-up hand & arm tracking even when elbows/torso are below camera!)
-    const hands = handResult?.landmarks ?? [];
-    if (trackArms && hands.length > 0) {
+    // 3. Fuse HandLandmarker (instant close-up hand & arm lifting even when elbows/shoulders are out of frame!)
+    const hands = (handResult?.landmarks ?? []).filter((h) => h && h.length >= 21);
+    const handsCount = hands.length;
+    if (trackArms && handsCount > 0) {
       poseDetected = true;
       const bodyCenterX = (userRightShoulder.x + userLeftShoulder.x) * 0.5;
 
@@ -592,31 +647,24 @@ export class WebcamTracker {
         side: 'userRight' | 'userLeft';
       }
 
-      const candidates: HandCandidate[] = hands
-        .filter((h) => h && h.length >= 21)
-        .map((h) => {
-          const wrist = h[0];
-          const midMcp = h[9];
-          const hx = wrist.x * 0.55 + midMcp.x * 0.45;
-          const hy = wrist.y * 0.55 + midMcp.y * 0.45;
-          const palmSpan = dist2D(wrist, midMcp);
+      const candidates: HandCandidate[] = hands.map((h) => {
+        const wrist = h[0];
+        const midMcp = h[9];
+        const hx = wrist.x * 0.5 + midMcp.x * 0.5;
+        const hy = wrist.y * 0.5 + midMcp.y * 0.5;
+        const palmSpan = dist2D(wrist, midMcp);
 
-          // Match to Pose wrists first if visible & close; otherwise use raw-image side of body centerline
-          // (raw-image left = userRight, raw-image right = userLeft)
-          let side: 'userRight' | 'userLeft' = hx < bodyCenterX ? 'userRight' : 'userLeft';
-          if (pLm && pLm.length >= 17) {
-            const pLeftVis = (pLm[15].visibility ?? 0) > 0.35;
-            const pRightVis = (pLm[16].visibility ?? 0) > 0.35;
-            const dLeft = pLeftVis ? Math.hypot(hx - pLm[15].x, hy - pLm[15].y) : 99;
-            const dRight = pRightVis ? Math.hypot(hx - pLm[16].x, hy - pLm[16].y) : 99;
-            if (Math.min(dLeft, dRight) < 0.18) {
-              side = dRight <= dLeft ? 'userRight' : 'userLeft';
-            }
+        let side: 'userRight' | 'userLeft' = hx < bodyCenterX ? 'userRight' : 'userLeft';
+        if (pLm && pLm.length >= 17) {
+          const dLeft = Math.hypot(hx - pLm[15].x, hy - pLm[15].y);
+          const dRight = Math.hypot(hx - pLm[16].x, hy - pLm[16].y);
+          if (Math.min(dLeft, dRight) < 0.16) {
+            side = dRight <= dLeft ? 'userRight' : 'userLeft';
           }
-          return { hx, hy, palmSpan, side };
-        });
+        }
+        return { hx, hy, palmSpan, side };
+      });
 
-      // If 2 hands are detected and both landed on the same side, split cleanly by raw-image X
       if (candidates.length >= 2 && candidates[0].side === candidates[1].side) {
         const sorted = [...candidates].sort((a, b) => a.hx - b.hx);
         sorted[0].side = 'userRight';
@@ -625,39 +673,35 @@ export class WebcamTracker {
 
       const buildHandArm = (cand: HandCandidate, shoulder: { x: number; y: number }): ArmDirection3D => {
         const vx = (cand.hx - shoulder.x) * videoAspect;
-        const vy = cand.hy - shoulder.y;
+        // Slightly lower virtual anchor Y (+0.08) so lifting hand to chest/chin/face clearly points UP!
+        const vy = cand.hy - (shoulder.y + 0.08);
         const dx = mirror ? -vx : vx;
         const dy = -vy;
-        // Subtle forward Z proportional to hand closeness (larger palm = closer to camera)
-        const depthBoost = clamp((cand.palmSpan / Math.max(0.12, faceH) - 0.18) * 0.55, 0.08, 0.34);
-        return normalizeArm(dx, dy, depthBoost, 0.95);
+        const depthBoost = clamp((cand.palmSpan / Math.max(0.12, faceH) - 0.16) * 0.65, 0.12, 0.42);
+        return normalizeArm(dx, dy, depthBoost, 0.98);
       };
 
       for (const cand of candidates) {
         if (cand.side === 'userRight') {
           const hArm = buildHandArm(cand, userRightShoulder);
-          if (userRightArm.detected) {
-            userRightArm = normalizeArm(
-              userRightArm.x * 0.3 + hArm.x * 0.7,
-              userRightArm.y * 0.3 + hArm.y * 0.7,
-              userRightArm.z * 0.3 + hArm.z * 0.7,
-              0.95,
-            );
-          } else {
-            userRightArm = hArm;
-          }
+          userRightArm = userRightArm.detected
+            ? normalizeArm(
+                userRightArm.x * 0.25 + hArm.x * 0.75,
+                userRightArm.y * 0.25 + hArm.y * 0.75,
+                userRightArm.z * 0.25 + hArm.z * 0.75,
+                0.98,
+              )
+            : hArm;
         } else {
           const hArm = buildHandArm(cand, userLeftShoulder);
-          if (userLeftArm.detected) {
-            userLeftArm = normalizeArm(
-              userLeftArm.x * 0.3 + hArm.x * 0.7,
-              userLeftArm.y * 0.3 + hArm.y * 0.7,
-              userLeftArm.z * 0.3 + hArm.z * 0.7,
-              0.95,
-            );
-          } else {
-            userLeftArm = hArm;
-          }
+          userLeftArm = userLeftArm.detected
+            ? normalizeArm(
+                userLeftArm.x * 0.25 + hArm.x * 0.75,
+                userLeftArm.y * 0.25 + hArm.y * 0.75,
+                userLeftArm.z * 0.25 + hArm.z * 0.75,
+                0.98,
+              )
+            : hArm;
         }
       }
     }
@@ -701,8 +745,11 @@ export class WebcamTracker {
       armL,
       armR,
       shoulderRoll,
-      poseReady: Boolean(this.poseLandmarker || this.handLandmarker),
+      poseReady: Boolean(this.poseLandmarker),
+      handReady: Boolean(this.handLandmarker),
       poseDetected,
+      handsCount,
+      armError: this.armError,
     };
 
     return this.latestPose;
@@ -735,10 +782,11 @@ export class WebcamTracker {
     // 1. Pose Arm & Shoulder skeleton overlay
     const pLm = poseResult?.landmarks?.[0];
     if (pLm && pLm.length >= 17) {
+      const hasScores = lmVis(pLm[11]) > 0.01 || lmVis(pLm[12]) > 0.01;
       const drawPoseBone = (aIdx: number, bIdx: number, color: string) => {
         const a = pLm[aIdx];
         const b = pLm[bIdx];
-        if ((a.visibility ?? 0) < 0.22 || (b.visibility ?? 0) < 0.22) return;
+        if (hasScores && (lmVis(a) < 0.18 || lmVis(b) < 0.18)) return;
         ctx.strokeStyle = color;
         ctx.lineWidth = 3;
         ctx.lineCap = 'round';
@@ -755,7 +803,7 @@ export class WebcamTracker {
 
       for (const idx of [11, 12, 13, 14, 15, 16]) {
         const pt = pLm[idx];
-        if ((pt.visibility ?? 0) < 0.22) continue;
+        if (hasScores && lmVis(pt) < 0.18) continue;
         ctx.fillStyle = idx === 15 || idx === 16 ? '#34d399' : '#38bdf8';
         ctx.beginPath();
         ctx.arc(pt.x * w, pt.y * h, idx >= 15 ? 4 : 3, 0, Math.PI * 2);
@@ -767,8 +815,8 @@ export class WebcamTracker {
     const hands = handResult?.landmarks ?? [];
     for (const hand of hands) {
       if (!hand || hand.length < 21) continue;
-      ctx.strokeStyle = 'rgba(167, 139, 250, 0.92)';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(167, 139, 250, 0.95)';
+      ctx.lineWidth = 2.2;
       ctx.lineCap = 'round';
       for (const [a, b] of HAND_BONES) {
         ctx.beginPath();

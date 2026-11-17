@@ -6,7 +6,7 @@ export interface AccessoriesHandles {
   torsoRoot: THREE.Group;
   update: (time: number, isTalking: boolean) => void;
   applyState: (state: AccessoriesState) => void;
-  configureForCharacter: (characterId: CharacterId, capVisible: boolean) => void;
+  configureForCharacter: (characterId: CharacterId, capVisible: boolean, hasHair?: boolean) => void;
   setAccentColor: (hex: string) => void;
 }
 
@@ -381,20 +381,20 @@ export function buildCharacterAccessories(): AccessoriesHandles {
       bowtie.visible = state.bowtie;
       wings.visible = state.wings;
     },
-    configureForCharacter(characterId: CharacterId, capVisible: boolean) {
+    configureForCharacter(characterId: CharacterId, capVisible: boolean, hasHair = false) {
       const hasActiveCap = characterId !== 'noob' && capVisible;
-      const capLift = hasActiveCap ? 0.062 : 0;
+      const topLift = hasActiveCap ? 0.062 : hasHair ? 0.048 : 0;
 
       // Exact measured Head-local eye Y: Baby Noob = 0.335, Classic & Modern Guest = 0.420!
       sunglasses.position.y = characterId === 'noob' ? 0.335 : 0.42;
       sunglasses.position.z = characterId === 'noob' ? 0.415 : 0.418;
 
-      crown.position.y = 0.84 + capLift;
-      catEars.position.y = 0.82 + capLift;
-      haloBaseY = 1.03 + capLift;
+      crown.position.y = 0.84 + topLift;
+      catEars.position.y = 0.82 + topLift;
+      haloBaseY = 1.03 + topLift;
       halo.position.y = haloBaseY;
 
-      headphones.position.y = hasActiveCap ? 0.032 : 0;
+      headphones.position.y = hasActiveCap || hasHair ? 0.032 : 0;
     },
     setAccentColor(hex: string) {
       accentMat.color.set(hex);

@@ -2,6 +2,19 @@ export type CharacterId = 'noob' | 'guest' | 'modern_guest';
 
 export type FaceStyleId = 'auto' | 'kawaii_dots' | 'classic_pills' | 'anime_sparkle';
 
+export type HairStyleId =
+  | 'none'
+  | 'tuft'
+  | 'spiky'
+  | 'bob'
+  | 'messy'
+  | 'pigtails'
+  | 'ponytail'
+  | 'curly'
+  | 'mohawk';
+
+export type HairBangsId = 'none' | 'straight' | 'side' | 'curtain' | 'wispy';
+
 export type EmotionId =
   | 'happy'
   | 'surprised'
@@ -76,6 +89,15 @@ export interface CharacterCustomization {
   mouthColor: string;
   showPrint: boolean;
   accessoryAccentColor: string;
+  // 3D Hair Editor settings
+  hairStyle: HairStyleId;
+  hairBangs: HairBangsId;
+  hairColor: string;
+  hairTipColor: string;
+  hairHighlight: boolean;
+  hairLength: number; // 0.65 .. 1.45
+  hairVolume: number; // 0.75 .. 1.40
+  hairGloss: number; // 0.0 .. 1.0
 }
 
 export interface TrackingSettings {
@@ -250,6 +272,14 @@ export const CHARACTERS: CharacterMeta[] = [
       mouthColor: '#d8244e',
       showPrint: true,
       accessoryAccentColor: '#38bdf8',
+      hairStyle: 'none',
+      hairBangs: 'none',
+      hairColor: '#5b341e',
+      hairTipColor: '#f59e0b',
+      hairHighlight: false,
+      hairLength: 1.0,
+      hairVolume: 1.0,
+      hairGloss: 0.45,
     },
     animations: [
       { id: 'live', label: 'Живой VTuber', shortLabel: 'VTuber', loop: true },
@@ -285,6 +315,14 @@ export const CHARACTERS: CharacterMeta[] = [
       mouthColor: '#d8244e',
       showPrint: true,
       accessoryAccentColor: '#ef4444',
+      hairStyle: 'none',
+      hairBangs: 'none',
+      hairColor: '#1c1d24',
+      hairTipColor: '#ef4444',
+      hairHighlight: false,
+      hairLength: 1.0,
+      hairVolume: 1.0,
+      hairGloss: 0.45,
     },
     animations: [
       { id: 'live', label: 'Живой VTuber', shortLabel: 'VTuber', loop: true },
@@ -322,6 +360,14 @@ export const CHARACTERS: CharacterMeta[] = [
       mouthColor: '#d8244e',
       showPrint: true,
       accessoryAccentColor: '#38bdf8',
+      hairStyle: 'none',
+      hairBangs: 'none',
+      hairColor: '#272936',
+      hairTipColor: '#38bdf8',
+      hairHighlight: false,
+      hairLength: 1.0,
+      hairVolume: 1.0,
+      hairGloss: 0.45,
     },
     animations: [
       { id: 'live', label: 'Живой VTuber', shortLabel: 'VTuber', loop: true },
@@ -611,6 +657,52 @@ export const BABY_VOICE_PRESETS: BabyVoicePreset[] = [
     pitch: 1.38,
     desc: 'Весёлый мультяшный ребёнок',
   },
+];
+
+export interface HairStyleMeta {
+  id: HairStyleId;
+  label: string;
+  emoji: string;
+}
+
+export const HAIR_STYLES: HairStyleMeta[] = [
+  { id: 'none', label: 'Без волос', emoji: '🥚' },
+  { id: 'tuft', label: 'Чубчик', emoji: '🌱' },
+  { id: 'spiky', label: 'Шипы', emoji: '⚡' },
+  { id: 'messy', label: 'Флаффи', emoji: '☁️' },
+  { id: 'bob', label: 'Каре', emoji: '💁' },
+  { id: 'pigtails', label: 'Хвостики', emoji: '🎀' },
+  { id: 'ponytail', label: 'Хвост', emoji: '🐴' },
+  { id: 'curly', label: 'Кудри', emoji: '🌀' },
+  { id: 'mohawk', label: 'Ирокез', emoji: '🤘' },
+];
+
+export interface HairBangsMeta {
+  id: HairBangsId;
+  label: string;
+}
+
+export const HAIR_BANGS: HairBangsMeta[] = [
+  { id: 'none', label: 'Нет' },
+  { id: 'straight', label: 'Прямая' },
+  { id: 'side', label: 'Набок' },
+  { id: 'curtain', label: 'Шторка' },
+  { id: 'wispy', label: 'Прядки' },
+];
+
+export const HAIR_COLOR_SWATCHES: Array<{ label: string; hex: string }> = [
+  { label: 'Шоколад', hex: '#4a2a18' },
+  { label: 'Каштан', hex: '#7c4728' },
+  { label: 'Уголь', hex: '#191b22' },
+  { label: 'Блонд', hex: '#f4cf65' },
+  { label: 'Рыжий', hex: '#d95326' },
+  { label: 'Белый', hex: '#f1f5f9' },
+  { label: 'Розовый', hex: '#f472b6' },
+  { label: 'Лаванда', hex: '#a78bfa' },
+  { label: 'Неон-голубой', hex: '#38bdf8' },
+  { label: 'Мята', hex: '#34d399' },
+  { label: 'Вишня', hex: '#e11d48' },
+  { label: 'Золото', hex: '#f59e0b' },
 ];
 
 export const DEFAULT_TRACKING_SETTINGS: TrackingSettings = {

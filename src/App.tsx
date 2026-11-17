@@ -7,6 +7,7 @@ import {
   DEFAULT_ACCESSORIES,
   DEFAULT_TRACKING_SETTINGS,
   EMOTIONS,
+  HAIR_COLOR_SWATCHES,
   getCharacterMeta,
   type AccessoriesState,
   type AnimationId,
@@ -16,6 +17,8 @@ import {
   type CharacterId,
   type EmotionId,
   type FaceStyleId,
+  type HairBangsId,
+  type HairStyleId,
   type LightingPresetId,
   type MicStatus,
   type RepeaterStateSnapshot,
@@ -384,18 +387,32 @@ export const App: React.FC = () => {
     const accents = ['#cd1515', '#38bdf8', '#f59e0b', '#ec4899', '#a855f7', '#22c55e', '#facc15', '#fb7185'];
     const eyes = ['#0c0c0c', '#1d4ed8', '#7c3aed', '#be123c', '#047857'];
     const faceStyles: FaceStyleId[] = ['auto', 'kawaii_dots', 'classic_pills', 'anime_sparkle'];
+    const hairStyles: HairStyleId[] = [
+      'none',
+      'tuft',
+      'spiky',
+      'messy',
+      'bob',
+      'pigtails',
+      'ponytail',
+      'curly',
+      'mohawk',
+    ];
+    const hairBangsList: HairBangsId[] = ['none', 'straight', 'side', 'curtain', 'wispy'];
 
     const skin = pickRandom(skins);
     const outfit = pickRandom(outfits);
     const accent = pickRandom(accents);
     const legs = pickRandom(outfits);
+    const pickedHair = pickRandom(hairStyles);
+    const pickedCap = meta.hasCap ? pickedHair === 'none' || Math.random() > 0.65 : false;
 
     const nextCustom: CharacterCustomization = {
       skinColor: skin,
       torsoColor: outfit,
       armsColor: characterId === 'noob' ? skin : pickRandom([outfit, accent, '#14151a']),
       legsColor: legs,
-      capVisible: meta.hasCap ? Math.random() > 0.25 : false,
+      capVisible: pickedCap,
       capDomeColor: outfit,
       capAccentColor: accent,
       shoeColor: accent,
@@ -404,6 +421,14 @@ export const App: React.FC = () => {
       mouthColor: pickRandom(['#d8244e', '#ec4899', '#f97316', '#e11d48']),
       showPrint: Math.random() > 0.2,
       accessoryAccentColor: accent,
+      hairStyle: pickedHair,
+      hairBangs: pickedHair === 'none' || pickedHair === 'mohawk' ? 'none' : pickRandom(hairBangsList),
+      hairColor: pickRandom(HAIR_COLOR_SWATCHES).hex,
+      hairTipColor: pickRandom(HAIR_COLOR_SWATCHES).hex,
+      hairHighlight: Math.random() > 0.45,
+      hairLength: Number((0.8 + Math.random() * 0.45).toFixed(2)),
+      hairVolume: Number((0.88 + Math.random() * 0.35).toFixed(2)),
+      hairGloss: Number((0.2 + Math.random() * 0.65).toFixed(2)),
     };
 
     const nextAcc: AccessoriesState = {
@@ -671,6 +696,15 @@ export const App: React.FC = () => {
     }
   }, [drawerOpen, drawerTab]);
 
+  const handleOpenHairEditor = useCallback(() => {
+    if (drawerOpen && drawerTab === 'hair') {
+      setDrawerOpen(false);
+    } else {
+      setDrawerTab('hair');
+      setDrawerOpen(true);
+    }
+  }, [drawerOpen, drawerTab]);
+
   return (
     <main className="relative h-screen w-screen overflow-hidden">
       {/* 100% Full-Viewport 3D VTuber Canvas */}
@@ -718,6 +752,7 @@ export const App: React.FC = () => {
             demoSpeech={demoSpeech}
             drawerOpen={drawerOpen}
             isCustomizerActive={drawerOpen && drawerTab === 'customizer'}
+            isHairEditorActive={drawerOpen && drawerTab === 'hair'}
             darkUi={darkUi}
             telemetry={telemetry}
             onSelectCharacter={handleSelectCharacter}
@@ -734,6 +769,7 @@ export const App: React.FC = () => {
               showToast('OBS режим активен · нажми H или Esc, чтобы вернуть интерфейс', 3000);
             }}
             onOpenCustomizer={handleOpenCustomizer}
+            onOpenHairEditor={handleOpenHairEditor}
             onToggleDrawer={() => {
               if (drawerOpen) {
                 setDrawerOpen(false);

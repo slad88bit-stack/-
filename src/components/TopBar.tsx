@@ -11,6 +11,7 @@ import {
   MousePointer2,
   Palette,
   Repeat2,
+  Scissors,
   SlidersHorizontal,
   Video,
   VideoOff,
@@ -35,6 +36,7 @@ interface TopBarProps {
   demoSpeech: boolean;
   drawerOpen: boolean;
   isCustomizerActive: boolean;
+  isHairEditorActive: boolean;
   darkUi: boolean;
   telemetry: TelemetrySnapshot;
   onSelectCharacter: (id: CharacterId) => void;
@@ -48,6 +50,7 @@ interface TopBarProps {
   onSnapshot: () => void;
   onEnterObsMode: () => void;
   onOpenCustomizer: () => void;
+  onOpenHairEditor: () => void;
   onToggleDrawer: () => void;
 }
 
@@ -62,6 +65,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   demoSpeech,
   drawerOpen,
   isCustomizerActive,
+  isHairEditorActive,
   darkUi,
   telemetry,
   onSelectCharacter,
@@ -75,6 +79,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onSnapshot,
   onEnterObsMode,
   onOpenCustomizer,
+  onOpenHairEditor,
   onToggleDrawer,
 }) => {
   const panelClass = darkUi
@@ -332,7 +337,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           type="button"
           onClick={onOpenCustomizer}
           title="Кастомка персонажа — цвета, кепка, лицо, аксессуары (клавиша C)"
-          className={`flex cursor-pointer items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-all ${
+          className={`flex cursor-pointer items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-bold transition-all ${
             isCustomizerActive
               ? 'bg-gradient-to-r from-amber-400 to-orange-400 text-slate-950 shadow-sm'
               : darkUi
@@ -341,7 +346,23 @@ export const TopBar: React.FC<TopBarProps> = ({
           }`}
         >
           <Palette className="h-3.5 w-3.5" />
-          <span>Кастомка</span>
+          <span className="hidden sm:inline">Кастомка</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenHairEditor}
+          title="3D-Редактор волос — 9 причёсок, чёлка, омбре, длина и объём"
+          className={`flex cursor-pointer items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-bold transition-all ${
+            isHairEditorActive
+              ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm'
+              : darkUi
+                ? 'bg-pink-500/20 text-pink-200 hover:bg-pink-500/30'
+                : 'bg-pink-500/15 text-pink-900 hover:bg-pink-500/25'
+          }`}
+        >
+          <Scissors className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Волосы</span>
         </button>
 
         <button
@@ -379,7 +400,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           onClick={onToggleDrawer}
           title="Открыть / скрыть панель студии"
           className={`flex cursor-pointer items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold transition-all ${
-            drawerOpen && !isCustomizerActive ? 'bg-[#0648a6] text-white shadow-sm' : idleBtn
+            drawerOpen && !isCustomizerActive && !isHairEditorActive ? 'bg-[#0648a6] text-white shadow-sm' : idleBtn
           }`}
         >
           <SlidersHorizontal className="h-3.5 w-3.5" />

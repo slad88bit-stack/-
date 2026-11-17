@@ -10,6 +10,7 @@ import {
   Palette,
   Repeat2,
   RotateCcw,
+  Scissors,
   Sliders,
   Square,
   Sun,
@@ -22,6 +23,9 @@ import {
   BACKGROUNDS,
   CHARACTERS,
   CUSTOM_PRESETS,
+  HAIR_BANGS,
+  HAIR_COLOR_SWATCHES,
+  HAIR_STYLES,
   getCharacterMeta,
   type AccessoriesState,
   type BackgroundId,
@@ -29,6 +33,8 @@ import {
   type CharacterCustomization,
   type CharacterId,
   type FaceStyleId,
+  type HairBangsId,
+  type HairStyleId,
   type LightingPresetId,
   type RepeaterStateSnapshot,
   type TelemetrySnapshot,
@@ -36,7 +42,7 @@ import {
   type WebcamStatus,
 } from '../types/vtuber';
 
-export type DrawerTab = 'customizer' | 'tracking' | 'stage';
+export type DrawerTab = 'customizer' | 'hair' | 'tracking' | 'stage';
 
 interface StudioDrawerProps {
   open: boolean;
@@ -183,14 +189,15 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
     >
       {/* Drawer Header & Tabs */}
       <div
-        className={`flex items-center justify-between border-b px-3 py-2.5 ${
+        className={`flex items-center justify-between gap-1 border-b px-2.5 py-2.5 ${
           darkUi ? 'border-white/10' : 'border-slate-900/8'
         }`}
       >
-        <div className="flex items-center gap-1 rounded-xl bg-black/5 p-1">
+        <div className="flex flex-1 items-center gap-0.5 rounded-xl bg-black/5 p-1">
           {(
             [
-              { id: 'customizer', label: 'Кастомка', icon: Palette },
+              { id: 'customizer', label: 'Скин', icon: Palette },
+              { id: 'hair', label: 'Волосы', icon: Scissors },
               { id: 'tracking', label: 'Трекинг', icon: Sliders },
               { id: 'stage', label: 'Сцена', icon: Layers },
             ] as const
@@ -202,7 +209,7 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
                 key={item.id}
                 type="button"
                 onClick={() => onChangeTab(item.id)}
-                className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-all ${
+                className={`flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-lg px-1.5 py-1.5 text-[11px] font-semibold transition-all ${
                   active
                     ? 'bg-[#0648a6] text-white shadow-sm'
                     : darkUi
@@ -210,8 +217,8 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
                       : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                <Icon className="h-3.5 w-3.5" />
-                {item.label}
+                <Icon className="h-3.5 w-3.5 shrink-0" />
+                <span>{item.label}</span>
               </button>
             );
           })}
@@ -530,6 +537,289 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
                   Скачать GLB
                 </a>
               </div>
+            </div>
+          </>
+        )}
+
+        {tab === 'hair' && (
+          <>
+            {/* 1. Hairstyle Picker (9 sculpted 3D styles) */}
+            <div className={`space-y-2.5 rounded-xl border p-3 ${cardBg}`}>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider opacity-75">
+                  ✂️ Причёска (3D)
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const styles: HairStyleId[] = [
+                        'tuft',
+                        'spiky',
+                        'messy',
+                        'bob',
+                        'pigtails',
+                        'ponytail',
+                        'curly',
+                        'mohawk',
+                      ];
+                      const bangsList: HairBangsId[] = ['none', 'straight', 'side', 'curtain', 'wispy'];
+                      const style = styles[Math.floor(Math.random() * styles.length)];
+                      const bangs =
+                        style === 'mohawk' || style === 'curly'
+                          ? 'none'
+                          : bangsList[Math.floor(Math.random() * bangsList.length)];
+                      const c1 =
+                        HAIR_COLOR_SWATCHES[Math.floor(Math.random() * HAIR_COLOR_SWATCHES.length)].hex;
+                      const c2 =
+                        HAIR_COLOR_SWATCHES[Math.floor(Math.random() * HAIR_COLOR_SWATCHES.length)].hex;
+                      onUpdateCustomization({
+                        hairStyle: style,
+                        hairBangs: bangs,
+                        hairColor: c1,
+                        hairTipColor: c2,
+                        hairHighlight: Math.random() > 0.4,
+                        hairLength: Number((0.8 + Math.random() * 0.48).toFixed(2)),
+                        hairVolume: Number((0.88 + Math.random() * 0.36).toFixed(2)),
+                        hairGloss: Number((0.2 + Math.random() * 0.7).toFixed(2)),
+                        ...(activeMeta.hasCap ? { capVisible: false } : {}),
+                      });
+                    }}
+                    title="Случайная 3D-причёска и покраска"
+                    className="flex cursor-pointer items-center gap-1 rounded-lg bg-pink-500/20 px-2 py-1 text-[10.5px] font-bold text-pink-700 transition-colors hover:bg-pink-500/30 dark:text-pink-300"
+                  >
+                    <Dices className="h-3 w-3" />
+                    Рандом
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onUpdateCustomization({
+                        hairStyle: 'none',
+                        hairBangs: 'none',
+                        hairHighlight: false,
+                        hairLength: 1.0,
+                        hairVolume: 1.0,
+                        hairGloss: 0.45,
+                      })
+                    }
+                    title="Убрать волосы"
+                    className={`flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-[10.5px] font-semibold transition-colors ${
+                      darkUi ? 'bg-white/8 hover:bg-white/15' : 'bg-slate-900/6 hover:bg-slate-900/12'
+                    }`}
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+
+              {activeMeta.hasCap && customization.capVisible && (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/12 px-2.5 py-1.5 text-[10.5px]">
+                  <span className="leading-tight opacity-90">
+                    Кепка надета — макушка спрятана под неё
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onUpdateCustomization({ capVisible: false })}
+                    className="shrink-0 cursor-pointer rounded-md bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-slate-950 hover:bg-amber-400"
+                  >
+                    Снять
+                  </button>
+                </div>
+              )}
+
+              <div className="grid grid-cols-3 gap-1.5">
+                {HAIR_STYLES.map((st) => {
+                  const active = customization.hairStyle === st.id;
+                  return (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => {
+                        const patch: Partial<CharacterCustomization> = { hairStyle: st.id };
+                        if (st.id === 'none') {
+                          patch.hairBangs = 'none';
+                        } else if (customization.hairStyle === 'none' && customization.hairBangs === 'none') {
+                          if (st.id === 'bob') patch.hairBangs = 'straight';
+                          else if (
+                            st.id === 'messy' ||
+                            st.id === 'pigtails' ||
+                            st.id === 'ponytail' ||
+                            st.id === 'spiky'
+                          ) {
+                            patch.hairBangs = 'side';
+                          }
+                        }
+                        onUpdateCustomization(patch);
+                      }}
+                      className={`flex cursor-pointer flex-col items-center rounded-xl border px-1.5 py-2 text-center transition-all ${
+                        active
+                          ? 'border-[#0648a6] bg-[#0648a6] text-white shadow-sm'
+                          : `${cardBg} hover:border-slate-400/40`
+                      }`}
+                    >
+                      <span className="text-base leading-none">{st.emoji}</span>
+                      <span className="mt-1 text-[10.5px] font-bold leading-tight">{st.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 2. Independent Bangs / Fringe Selector */}
+            <div className={`space-y-2 rounded-xl border p-3 ${cardBg}`}>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider opacity-75">
+                  Чёлка (комбинируется)
+                </span>
+                <span className={`text-[10px] ${muted}`}>поверх любой причёски</span>
+              </div>
+              <div className="grid grid-cols-5 gap-1">
+                {HAIR_BANGS.map((b) => {
+                  const active = customization.hairBangs === b.id;
+                  return (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() => onUpdateCustomization({ hairBangs: b.id })}
+                      className={`cursor-pointer rounded-lg px-1 py-1.5 text-[10px] font-bold transition-all ${
+                        active
+                          ? 'bg-[#0648a6] text-white shadow-xs'
+                          : darkUi
+                            ? 'bg-white/6 text-slate-200 hover:bg-white/12'
+                            : 'bg-white/80 text-slate-700 hover:bg-white'
+                      }`}
+                    >
+                      {b.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 3. Hair Color & Two-Tone Ombre / Highlights */}
+            <div className={`space-y-3 rounded-xl border p-3 ${cardBg}`}>
+              <div className="text-[11px] font-bold uppercase tracking-wider opacity-75">
+                Покраска и омбре
+              </div>
+
+              {/* Primary Hair Color */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium opacity-85">Основной цвет</span>
+                  <label className="flex cursor-pointer items-center gap-1.5">
+                    <span className="font-mono-tech text-[10px] uppercase opacity-65">
+                      {customization.hairColor}
+                    </span>
+                    <input
+                      type="color"
+                      value={customization.hairColor}
+                      onChange={(e) => onUpdateCustomization({ hairColor: e.target.value })}
+                      className="h-5 w-6 cursor-pointer rounded border-0 bg-transparent p-0"
+                    />
+                  </label>
+                </div>
+                <div className="grid grid-cols-6 gap-1.5">
+                  {HAIR_COLOR_SWATCHES.map((sw) => {
+                    const selected = customization.hairColor.toLowerCase() === sw.hex.toLowerCase();
+                    return (
+                      <button
+                        key={sw.hex}
+                        type="button"
+                        title={sw.label}
+                        onClick={() => onUpdateCustomization({ hairColor: sw.hex })}
+                        className={`h-6 w-full cursor-pointer rounded-lg border transition-transform hover:scale-105 ${
+                          selected
+                            ? 'scale-105 border-white ring-2 ring-[#0648a6]'
+                            : 'border-black/15'
+                        }`}
+                        style={{ backgroundColor: sw.hex }}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+
+              <ToggleRow
+                label="Омбре / цветные пряди"
+                checked={customization.hairHighlight}
+                onChange={(v) => onUpdateCustomization({ hairHighlight: v })}
+              />
+
+              {customization.hairHighlight && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium opacity-85">Цвет прядей и резинок</span>
+                    <label className="flex cursor-pointer items-center gap-1.5">
+                      <span className="font-mono-tech text-[10px] uppercase opacity-65">
+                        {customization.hairTipColor}
+                      </span>
+                      <input
+                        type="color"
+                        value={customization.hairTipColor}
+                        onChange={(e) => onUpdateCustomization({ hairTipColor: e.target.value })}
+                        className="h-5 w-6 cursor-pointer rounded border-0 bg-transparent p-0"
+                      />
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-6 gap-1.5">
+                    {HAIR_COLOR_SWATCHES.map((sw) => {
+                      const selected = customization.hairTipColor.toLowerCase() === sw.hex.toLowerCase();
+                      return (
+                        <button
+                          key={sw.hex}
+                          type="button"
+                          title={sw.label}
+                          onClick={() => onUpdateCustomization({ hairTipColor: sw.hex })}
+                          className={`h-5 w-full cursor-pointer rounded-md border transition-transform hover:scale-105 ${
+                            selected
+                              ? 'scale-105 border-white ring-2 ring-[#0648a6]'
+                              : 'border-black/15'
+                          }`}
+                          style={{ backgroundColor: sw.hex }}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 4. 3D Hair Morph Sliders (Length, Volume, Gloss) */}
+            <div className={`space-y-2.5 rounded-xl border p-3 ${cardBg}`}>
+              <div className="text-[11px] font-bold uppercase tracking-wider opacity-75">
+                Форма и физика волос
+              </div>
+              <SliderRow
+                label="Длина прядей"
+                value={customization.hairLength}
+                min={0.65}
+                max={1.45}
+                step={0.02}
+                display={`${Math.round(customization.hairLength * 100)}%`}
+                onChange={(v) => onUpdateCustomization({ hairLength: v })}
+              />
+              <SliderRow
+                label="Объём / пышность"
+                value={customization.hairVolume}
+                min={0.75}
+                max={1.4}
+                step={0.02}
+                display={`${Math.round(customization.hairVolume * 100)}%`}
+                onChange={(v) => onUpdateCustomization({ hairVolume: v })}
+              />
+              <SliderRow
+                label="Блеск волос"
+                value={customization.hairGloss}
+                min={0.0}
+                max={1.0}
+                step={0.05}
+                display={`${Math.round(customization.hairGloss * 100)}%`}
+                onChange={(v) => onUpdateCustomization({ hairGloss: v })}
+              />
+              <p className={`pt-0.5 text-[10.5px] leading-snug ${muted}`}>
+                Хвостики, чубчик и чёлка мягко покачиваются при повороте головы и речи!
+              </p>
             </div>
           </>
         )}

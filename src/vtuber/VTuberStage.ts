@@ -19,6 +19,7 @@ import {
 } from '../types/vtuber';
 import { FaceCanvasEngine } from './FaceCanvasEngine';
 import { buildCharacterAccessories } from './AccessoriesBuilder';
+import { buildHairSystem } from './HairBuilder';
 import { AudioLipSync, sampleDemoSpeech } from './AudioLipSync';
 import { BabyVoiceRepeater } from './BabyVoiceRepeater';
 import { WebcamTracker } from './WebcamTracker';
@@ -302,6 +303,7 @@ export class VTuberStage {
   // VTuber subsystems
   private readonly faceEngine = new FaceCanvasEngine();
   private readonly accessories = buildCharacterAccessories();
+  private readonly hair = buildHairSystem();
   public readonly webcam = new WebcamTracker();
   public readonly audio = new AudioLipSync();
   public readonly repeater = new BabyVoiceRepeater();
@@ -326,6 +328,8 @@ export class VTuberStage {
   private curYaw = 0;
   private curPitch = 0;
   private curRoll = 0;
+  private prevYaw = 0;
+  private prevPitch = 0;
   private curBodyX = 0;
   private curBodyY = 0;
   private curGazeX = 0;
@@ -778,9 +782,12 @@ export class VTuberStage {
       nextChar.mixer.stopAllAction();
       this.resetCharacterBonesToRest(nextChar);
 
-      // Attach shared 3D accessories directly to the new character's Head & Torso bones
+      // Attach shared 3D hair & accessories directly to the new character's Head & Torso bones
       const headBone = nextChar.bones.get('Head');
-      if (headBone) headBone.add(this.accessories.headRoot);
+      if (headBone) {
+        headBone.add(this.hair.root);
+        headBone.add(this.accessories.headRoot);
+      }
       const torsoBone = nextChar.bones.get('Torso');
       if (torsoBone) torsoBone.add(this.accessories.torsoRoot);
 
@@ -811,11 +818,12 @@ export class VTuberStage {
     if (!ch) return;
     const c = this.customization;
 
-    // 1. Cap visibility & accessory positioning
+    // 1. Cap visibility, 3D Hair & accessory positioning
     for (const capMesh of ch.capMeshes) {
       capMesh.visible = c.capVisible;
     }
-    this.accessories.configureForCharacter(ch.id, c.capVisible);
+    this.hair.applyCustomization(c, ch.id);
+    this.accessories.configureForCharacter(ch.id, c.capVisible, c.hairStyle !== 'none');
     this.accessories.setAccentColor(c.accessoryAccentColor);
 
     // 2. Character-specific material & overlay updates
@@ -1516,7 +1524,12 @@ export class VTuberStage {
       }
     }
 
-    // 6. Accessories, Stage & Particles
+    // 6. Hair physics, Accessories, Stage & Particles
+    const headVelYaw = (this.curYaw - this.prevYaw) / dt;
+    const headVelPitch = (this.curPitch - this.prevPitch) / dt;
+    this.prevYaw = this.curYaw;
+    this.prevPitch = this.curPitch;
+    this.hair.update(this.elapsed, isTalking, headVelYaw, headVelPitch);
     this.accessories.update(this.elapsed, isTalking);
     this.updateStageAmbience(dt);
     this.updateParticles(dt);

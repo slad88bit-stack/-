@@ -30,6 +30,27 @@ export type WebcamStatus = 'idle' | 'loading' | 'active' | 'error';
 
 export type MicStatus = 'idle' | 'active' | 'error';
 
+export type RepeaterPhase = 'idle' | 'listening' | 'recording' | 'speaking' | 'error';
+
+export type BabyVoicePresetId = 'baby' | 'toddler' | 'cartoon';
+
+export interface BabyVoicePreset {
+  id: BabyVoicePresetId;
+  label: string;
+  emoji: string;
+  pitch: number;
+  desc: string;
+}
+
+export interface RepeaterStateSnapshot {
+  phase: RepeaterPhase;
+  autoListen: boolean;
+  hasRecording: boolean;
+  recordSeconds: number;
+  inputLevel: number;
+  error: string | null;
+}
+
 export interface AccessoriesState {
   headphones: boolean;
   crown: boolean;
@@ -70,6 +91,9 @@ export interface TrackingSettings {
   armTracking: boolean;
   armSensitivity: number; // 0.5 .. 1.8
   fullMouthTracking: boolean;
+  babyPitch: number; // 1.2 .. 1.9 (baby voice pitch multiplier)
+  repeaterAutoListen: boolean; // Talking Tom auto-detect phrase mode
+  repeaterThreshold: number; // 0.01 .. 0.08 VAD voice threshold
 }
 
 export interface ArmDirection3D {
@@ -565,6 +589,30 @@ export const DEFAULT_ACCESSORIES: AccessoriesState = {
   blushAlways: false,
 };
 
+export const BABY_VOICE_PRESETS: BabyVoicePreset[] = [
+  {
+    id: 'baby',
+    label: 'Малыш',
+    emoji: '👶',
+    pitch: 1.54,
+    desc: 'Классический милый голос малыша',
+  },
+  {
+    id: 'toddler',
+    label: 'Карапуз',
+    emoji: '🍼',
+    pitch: 1.74,
+    desc: 'Сверхмилый писклявый чиби-голосок',
+  },
+  {
+    id: 'cartoon',
+    label: 'Мультяшка',
+    emoji: '🎈',
+    pitch: 1.38,
+    desc: 'Весёлый мультяшный ребёнок',
+  },
+];
+
 export const DEFAULT_TRACKING_SETTINGS: TrackingSettings = {
   headSensitivity: 1.0,
   bodySway: 0.75,
@@ -578,4 +626,7 @@ export const DEFAULT_TRACKING_SETTINGS: TrackingSettings = {
   armTracking: true,
   armSensitivity: 1.15,
   fullMouthTracking: true,
+  babyPitch: 1.54,
+  repeaterAutoListen: true,
+  repeaterThreshold: 0.022,
 };

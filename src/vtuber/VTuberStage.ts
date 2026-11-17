@@ -20,6 +20,7 @@ import {
 import { FaceCanvasEngine } from './FaceCanvasEngine';
 import { buildCharacterAccessories } from './AccessoriesBuilder';
 import { AudioLipSync, sampleDemoSpeech } from './AudioLipSync';
+import { BabyVoiceRepeater } from './BabyVoiceRepeater';
 import { WebcamTracker } from './WebcamTracker';
 
 interface BoneRestPose {
@@ -303,6 +304,7 @@ export class VTuberStage {
   private readonly accessories = buildCharacterAccessories();
   public readonly webcam = new WebcamTracker();
   public readonly audio = new AudioLipSync();
+  public readonly repeater = new BabyVoiceRepeater();
 
   // Particles
   private readonly heartTex = createParticleTexture('heart');
@@ -1034,6 +1036,11 @@ export class VTuberStage {
 
   public setSettings(settings: TrackingSettings): void {
     this.settings = { ...settings };
+    this.repeater.configure({
+      babyPitch: settings.babyPitch,
+      autoListen: settings.repeaterAutoListen,
+      threshold: settings.repeaterThreshold,
+    });
   }
 
   public setDemoSpeech(enabled: boolean): void {
@@ -1189,7 +1196,11 @@ export class VTuberStage {
       ? this.webcam.detect(this.settings.mirrorCamera, this.settings.armTracking)
       : null;
     const micSample = this.audio.sample(this.settings.micGain, dt);
-    const demoSample = this.demoSpeech ? sampleDemoSpeech(this.elapsed) : null;
+    const repeaterPhase = this.repeater.getPhase();
+    const repeaterSample = this.repeater.samplePlayback(dt);
+    const isRepeaterSpeaking = repeaterPhase === 'speaking';
+    const isRepeaterListening = repeaterPhase === 'listening' || repeaterPhase === 'recording';
+    const demoSample = this.demoSpeech && !isRepeaterSpeaking ? sampleDemoSpeech(this.elapsed) : null;
 
     // 2. Compute target pose
     const sens = this.settings.headSensitivity;
@@ -1332,12 +1343,48 @@ export class VTuberStage {
       return 0;
     };
 
+    // Expressive Talking-Baby posture when listening / recording / repeating!
+    if (isRepeaterListening && !faceDetected) {
+      const recBoost = repeaterPhase === 'recording' ? 1 : 0.6;
+      targetRoll += 0.17 * recBoost + Math.sin(this.elapsed * 2.4) * 0.03;
+      targetPitch -= 0.05 * recBoost;
+      targetBrowUp = Math.max(targetBrowUp, repeaterPhase === 'recording' ? 0.52 : 0.22);
+    } else if (isRepeaterSpeaking && !faceDetected) {
+      const talk = repeaterSample.audioLevel;
+      targetYaw += Math.sin(this.elapsed * 4.4) * 0.14 * (0.4 + talk);
+      targetPitch += Math.sin(this.elapsed * 10.5) * 0.10 * talk;
+      targetRoll += Math.cos(this.elapsed * 3.8) * 0.09;
+    }
+
     let overrideArmL: THREE.Vector3 | null = null;
     let overrideArmR: THREE.Vector3 | null = null;
+    const webcamHasArmL = Boolean(camPose?.armL.detected && this.settings.armTracking);
+    const webcamHasArmR = Boolean(camPose?.armR.detected && this.settings.armTracking);
+
     if (this.armTestTimer > 0) {
       const wave = Math.sin(this.elapsed * 11) * 0.22;
       overrideArmL = new THREE.Vector3(0.62 + wave, 0.78, 0.32).normalize();
       overrideArmR = new THREE.Vector3(-0.62 + wave, 0.78, 0.32).normalize();
+    } else if (isRepeaterSpeaking) {
+      const talk = repeaterSample.audioLevel;
+      if (!webcamHasArmL) {
+        overrideArmL = new THREE.Vector3(
+          0.66 + Math.sin(this.elapsed * 4.8) * 0.24,
+          -0.1 + talk * 0.92 + Math.sin(this.elapsed * 8.2) * 0.22,
+          0.34 + talk * 0.38,
+        ).normalize();
+      }
+      if (!webcamHasArmR) {
+        overrideArmR = new THREE.Vector3(
+          -0.66 + Math.cos(this.elapsed * 4.2) * 0.24,
+          -0.14 + talk * 0.85 + Math.cos(this.elapsed * 7.6) * 0.2,
+          0.32 + talk * 0.35,
+        ).normalize();
+      }
+    } else if (repeaterPhase === 'recording' && !webcamHasArmL && !webcamHasArmR) {
+      // Cute attentive perked arms while listening closely to your phrase
+      overrideArmL = new THREE.Vector3(0.62, -0.35 + Math.sin(this.elapsed * 3.5) * 0.06, 0.38).normalize();
+      overrideArmR = new THREE.Vector3(-0.62, -0.35 + Math.cos(this.elapsed * 3.5) * 0.06, 0.38).normalize();
     } else if (demoSample && !webcamActive) {
       const talk = demoSample.audioLevel;
       overrideArmL = new THREE.Vector3(
@@ -1356,21 +1403,31 @@ export class VTuberStage {
     const wantBlendR = updateArmTarget('R', this.curArmDirR, camPose?.armR ?? null, overrideArmR);
     this.curArmBlendL = damp(this.curArmBlendL, wantBlendL, wantBlendL > this.curArmBlendL ? 14 : 5, dt);
     this.curArmBlendR = damp(this.curArmBlendR, wantBlendR, wantBlendR > this.curArmBlendR ? 14 : 5, dt);
-    this.lastArmLDetected = Boolean(camPose?.armL.detected && this.settings.armTracking);
-    this.lastArmRDetected = Boolean(camPose?.armR.detected && this.settings.armTracking);
+    this.lastArmLDetected = webcamHasArmL;
+    this.lastArmRDetected = webcamHasArmR;
 
-    const isLipSyncActive = this.audio.isActive() || this.demoSpeech || (webcamActive && faceDetected);
-    const isFullMouthTracked = Boolean(webcamActive && faceDetected && this.settings.fullMouthTracking);
+    const isLipSyncActive =
+      isRepeaterSpeaking || this.audio.isActive() || this.demoSpeech || (webcamActive && faceDetected);
+    // While Baby is actively repeating your phrase, let his baby-voice lip-sync drive the mouth directly!
+    const isFullMouthTracked = Boolean(
+      !isRepeaterSpeaking && webcamActive && faceDetected && this.settings.fullMouthTracking,
+    );
 
-    if (this.audio.isActive()) {
-      targetMouthOpen = Math.max(targetMouthOpen, micSample.mouthOpen);
-      if (micSample.isTalking) {
-        targetMouthRound = Math.max(targetMouthRound * 0.6, micSample.mouthRound);
+    if (isRepeaterSpeaking) {
+      targetMouthOpen = repeaterSample.mouthOpen;
+      targetMouthRound = repeaterSample.mouthRound;
+      targetMouthSmile = Math.max(targetMouthSmile, 0.78);
+    } else {
+      if (this.audio.isActive()) {
+        targetMouthOpen = Math.max(targetMouthOpen, micSample.mouthOpen);
+        if (micSample.isTalking) {
+          targetMouthRound = Math.max(targetMouthRound * 0.6, micSample.mouthRound);
+        }
       }
-    }
-    if (demoSample) {
-      targetMouthOpen = Math.max(targetMouthOpen, demoSample.mouthOpen);
-      targetMouthRound = demoSample.mouthRound;
+      if (demoSample) {
+        targetMouthOpen = Math.max(targetMouthOpen, demoSample.mouthOpen);
+        targetMouthRound = demoSample.mouthRound;
+      }
     }
 
     const autoBlinkVal = this.updateAutoBlink(dt);
@@ -1408,13 +1465,16 @@ export class VTuberStage {
     this.curBrowUp = damp(this.curBrowUp, targetBrowUp, 16, dt);
     this.curBrowDown = damp(this.curBrowDown, targetBrowDown, 16, dt);
 
-    const rawAudio = this.audio.isActive()
-      ? micSample.audioLevel
-      : demoSample
-        ? demoSample.audioLevel
-        : targetMouthOpen * 0.6;
+    const rawAudio = isRepeaterSpeaking
+      ? repeaterSample.audioLevel
+      : this.audio.isActive()
+        ? micSample.audioLevel
+        : demoSample
+          ? demoSample.audioLevel
+          : targetMouthOpen * 0.6;
     this.curAudioLevel = damp(this.curAudioLevel, rawAudio, 16, dt);
-    const isTalking = this.curMouthOpen > 0.14 || micSample.isTalking || Boolean(demoSample?.isTalking);
+    const isTalking =
+      isRepeaterSpeaking || this.curMouthOpen > 0.14 || micSample.isTalking || Boolean(demoSample?.isTalking);
 
     // 4. Live Face Engine render (character-aware UV layout + custom colors + full mouth mirroring!)
     const patBlush = this.headpatTimer > 0 ? Math.min(1, this.headpatTimer * 1.4) : 0;
@@ -1480,11 +1540,13 @@ export class VTuberStage {
     this.telemetryTimer += dt;
     if (this.telemetryTimer >= 0.066) {
       this.telemetryTimer = 0;
-      const spectrum = this.audio.isActive()
-        ? micSample.spectrum
-        : demoSample
-          ? demoSample.spectrum
-          : new Array<number>(16).fill(0);
+      const spectrum = isRepeaterSpeaking
+        ? repeaterSample.spectrum
+        : this.audio.isActive()
+          ? micSample.spectrum
+          : demoSample
+            ? demoSample.spectrum
+            : new Array<number>(16).fill(0);
 
       this.callbacks.onTelemetry?.({
         yawDeg: Math.round(THREE.MathUtils.radToDeg(this.curYaw)),
@@ -1782,6 +1844,7 @@ export class VTuberStage {
 
     this.webcam.dispose();
     this.audio.stop();
+    this.repeater.dispose();
     this.faceEngine.dispose();
     this.controls.dispose();
     this.renderer.dispose();

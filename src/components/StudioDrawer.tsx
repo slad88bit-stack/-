@@ -6,14 +6,19 @@ import {
   Download,
   Image as ImageIcon,
   Layers,
+  Mic,
   Palette,
+  Repeat2,
   RotateCcw,
   Sliders,
+  Square,
   Sun,
   Video,
+  Volume2,
   X,
 } from 'lucide-react';
 import {
+  BABY_VOICE_PRESETS,
   BACKGROUNDS,
   CHARACTERS,
   CUSTOM_PRESETS,
@@ -25,6 +30,7 @@ import {
   type CharacterId,
   type FaceStyleId,
   type LightingPresetId,
+  type RepeaterStateSnapshot,
   type TelemetrySnapshot,
   type TrackingSettings,
   type WebcamStatus,
@@ -42,6 +48,7 @@ interface StudioDrawerProps {
   webcamStatus: WebcamStatus;
   webcamError: string | null;
   micError: string | null;
+  repeater: RepeaterStateSnapshot;
   telemetry: TelemetrySnapshot;
   settings: TrackingSettings;
   background: BackgroundId;
@@ -58,6 +65,10 @@ interface StudioDrawerProps {
   onAttachPreviewCanvas: (canvas: HTMLCanvasElement | null) => void;
   onCalibrateWebcam: () => void;
   onToggleWebcam: () => void;
+  onToggleRepeater: () => void;
+  onManualRecordRepeater: () => void;
+  onStopRecordAndRepeat: () => void;
+  onReplayBabyPhrase: () => void;
   onTestArms: () => void;
   onUpdateSettings: (patch: Partial<TrackingSettings>) => void;
   onSelectBackground: (bg: BackgroundId) => void;
@@ -117,6 +128,7 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
   webcamStatus,
   webcamError,
   micError,
+  repeater,
   telemetry,
   settings,
   background,
@@ -133,6 +145,10 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
   onAttachPreviewCanvas,
   onCalibrateWebcam,
   onToggleWebcam,
+  onToggleRepeater,
+  onManualRecordRepeater,
+  onStopRecordAndRepeat,
+  onReplayBabyPhrase,
   onTestArms,
   onUpdateSettings,
   onSelectBackground,
@@ -520,11 +536,171 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
 
         {tab === 'tracking' && (
           <>
-            {(webcamError || micError) && (
+            {(webcamError || micError || repeater.error) && (
               <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-300">
-                {webcamError || micError}
+                {repeater.error || webcamError || micError}
               </div>
             )}
+
+            {/* Baby Voice Repeater Card (Talking Tom style!) */}
+            <div className={`space-y-2.5 rounded-xl border p-3 ${cardBg}`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm">👶</span>
+                  <span className="text-[11px] font-bold uppercase tracking-wider opacity-85">
+                    Повторяшка · голос малыша
+                  </span>
+                </div>
+                <span
+                  className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${
+                    repeater.phase === 'recording'
+                      ? 'bg-rose-500 text-white animate-pulse'
+                      : repeater.phase === 'speaking'
+                        ? 'bg-fuchsia-500 text-white'
+                        : repeater.phase === 'listening'
+                          ? 'bg-violet-500/20 text-violet-600 dark:text-violet-300'
+                          : 'bg-black/8 opacity-65'
+                  }`}
+                >
+                  {repeater.phase === 'recording'
+                    ? `Запись ${repeater.recordSeconds.toFixed(1)}с`
+                    : repeater.phase === 'speaking'
+                      ? 'Повторяет!'
+                      : repeater.phase === 'listening'
+                        ? 'Слушает…'
+                        : 'Выкл'}
+                </span>
+              </div>
+
+              <p className={`text-[11px] leading-snug ${muted}`}>
+                Скажи любую фразу — персонаж запишет её и сразу повторит милым голосом малыша с анимацией рта и жестами!
+              </p>
+
+              {/* Live mic input bar while listening/recording */}
+              {(repeater.phase === 'listening' || repeater.phase === 'recording') && (
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[10px]">
+                    <span className={muted}>
+                      {repeater.phase === 'recording' ? 'Говори… пауза завершит запись' : 'Жду голос…'}
+                    </span>
+                    <span className="font-mono-tech opacity-75">
+                      {Math.round(repeater.inputLevel * 100)}%
+                    </span>
+                  </div>
+                  <div className={`h-1.5 w-full overflow-hidden rounded-full ${darkUi ? 'bg-white/10' : 'bg-slate-900/10'}`}>
+                    <div
+                      className={`h-full rounded-full transition-all duration-75 ${
+                        repeater.phase === 'recording' ? 'bg-rose-500' : 'bg-violet-500'
+                      }`}
+                      style={{ width: `${Math.min(100, Math.round(repeater.inputLevel * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Primary Action Buttons */}
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={onToggleRepeater}
+                  className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl px-2.5 py-2 text-xs font-bold transition-all ${
+                    repeater.phase !== 'idle' && repeater.phase !== 'error'
+                      ? 'bg-violet-600 text-white shadow-sm hover:bg-violet-700'
+                      : 'bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white shadow-sm hover:brightness-105'
+                  }`}
+                >
+                  <Repeat2 className="h-3.5 w-3.5" />
+                  {repeater.phase !== 'idle' && repeater.phase !== 'error' ? 'Стоп режим' : 'Слушать (R)'}
+                </button>
+
+                {repeater.phase === 'recording' ? (
+                  <button
+                    type="button"
+                    onClick={onStopRecordAndRepeat}
+                    className="flex cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-rose-500 px-2.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-rose-600"
+                  >
+                    <Square className="h-3 w-3 fill-current" />
+                    Повторить!
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onManualRecordRepeater}
+                    className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border px-2.5 py-2 text-xs font-bold transition-all ${
+                      darkUi
+                        ? 'border-white/15 bg-white/8 text-white hover:bg-white/15'
+                        : 'border-slate-900/12 bg-white/80 text-slate-800 hover:bg-white'
+                    }`}
+                  >
+                    <Mic className="h-3.5 w-3.5 text-rose-500" />
+                    Записать фразу
+                  </button>
+                )}
+              </div>
+
+              {repeater.hasRecording && (
+                <button
+                  type="button"
+                  onClick={onReplayBabyPhrase}
+                  disabled={repeater.phase === 'recording'}
+                  className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-amber-400/25 px-3 py-1.5 text-xs font-bold text-amber-800 transition-all hover:bg-amber-400/40 disabled:opacity-40 dark:text-amber-200"
+                >
+                  <Volume2 className="h-3.5 w-3.5" />
+                  Повторить последнюю фразу ещё раз
+                </button>
+              )}
+
+              {/* Baby Voice Presets */}
+              <div className="grid grid-cols-3 gap-1 pt-0.5">
+                {BABY_VOICE_PRESETS.map((preset) => {
+                  const active = Math.abs(settings.babyPitch - preset.pitch) < 0.05;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => onUpdateSettings({ babyPitch: preset.pitch })}
+                      title={preset.desc}
+                      className={`flex cursor-pointer flex-col items-center rounded-lg px-1.5 py-1.5 text-[10px] font-bold transition-all ${
+                        active
+                          ? 'bg-violet-600 text-white shadow-xs'
+                          : darkUi
+                            ? 'bg-white/6 text-slate-200 hover:bg-white/12'
+                            : 'bg-white/75 text-slate-700 hover:bg-white'
+                      }`}
+                    >
+                      <span className="text-sm leading-none">{preset.emoji}</span>
+                      <span className="mt-1">{preset.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <SliderRow
+                label="Высота голоса малыша"
+                value={settings.babyPitch}
+                min={1.2}
+                max={1.9}
+                step={0.02}
+                display={`${settings.babyPitch.toFixed(2)}×`}
+                onChange={(v) => onUpdateSettings({ babyPitch: v })}
+              />
+
+              <ToggleRow
+                label="Авто-повтор после паузы"
+                checked={settings.repeaterAutoListen}
+                onChange={(v) => onUpdateSettings({ repeaterAutoListen: v })}
+              />
+
+              <SliderRow
+                label="Порог микрофона (авто)"
+                value={settings.repeaterThreshold}
+                min={0.01}
+                max={0.07}
+                step={0.002}
+                display={`${Math.round(settings.repeaterThreshold * 1000)}`}
+                onChange={(v) => onUpdateSettings({ repeaterThreshold: v })}
+              />
+            </div>
 
             {/* Webcam Face-Mesh PiP Preview */}
             <div className={`overflow-hidden rounded-xl border ${cardBg}`}>

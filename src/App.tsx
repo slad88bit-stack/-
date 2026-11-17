@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Eye, Loader2, Sparkles } from 'lucide-react';
+import { Eye, Loader2, Mic, Sparkles, Square, Volume2, X } from 'lucide-react';
 import {
   BACKGROUNDS,
   CHARACTERS,
@@ -18,6 +18,7 @@ import {
   type FaceStyleId,
   type LightingPresetId,
   type MicStatus,
+  type RepeaterStateSnapshot,
   type TelemetrySnapshot,
   type TrackingSettings,
   type WebcamStatus,
@@ -28,6 +29,15 @@ import { BottomDock } from './components/BottomDock';
 import { StudioDrawer, type DrawerTab } from './components/StudioDrawer';
 
 const STORAGE_KEY = 'baby_vtuber_custom_v2';
+
+const INITIAL_REPEATER: RepeaterStateSnapshot = {
+  phase: 'idle',
+  autoListen: true,
+  inputLevel: 0,
+  recordSeconds: 0,
+  hasRecording: false,
+  error: null,
+};
 
 const INITIAL_TELEMETRY: TelemetrySnapshot = {
   yawDeg: 0,
@@ -126,6 +136,7 @@ export const App: React.FC = () => {
   const [webcamError, setWebcamError] = useState<string | null>(null);
   const [micStatus, setMicStatus] = useState<MicStatus>('idle');
   const [micError, setMicError] = useState<string | null>(null);
+  const [repeater, setRepeater] = useState<RepeaterStateSnapshot>(INITIAL_REPEATER);
   const [mouseTracking, setMouseTracking] = useState(true);
   const [demoSpeech, setDemoSpeech] = useState(false);
 
@@ -195,9 +206,11 @@ export const App: React.FC = () => {
       );
       return;
     }
+    stage.repeater.setStateListener(setRepeater);
     stageRef.current = stage;
 
     return () => {
+      stage.repeater.setStateListener(undefined);
       stage.dispose();
       stageRef.current = null;
     };
@@ -466,6 +479,10 @@ export const App: React.FC = () => {
       return;
     }
 
+    if (stage.repeater.isActive()) {
+      stage.repeater.stop();
+    }
+
     setMicError(null);
     try {
       await stage.audio.start();
@@ -484,6 +501,87 @@ export const App: React.FC = () => {
       showToast('Не удалось включить микрофон', 3200);
     }
   }, [micStatus, showToast]);
+
+  const handleToggleRepeater = useCallback(async () => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    if (stage.repeater.isActive()) {
+      stage.repeater.stop();
+      showToast('Повторяшка выключена');
+      return;
+    }
+
+    if (micStatus === 'active') {
+      stage.audio.stop();
+      setMicStatus('idle');
+    }
+
+    try {
+      setDemoSpeech(false);
+      setAnimationMode('live');
+      await stage.repeater.startListening();
+      showToast('👶 Повторяшка включена! Скажи фразу — персонаж повторит голосом малыша!', 3600);
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Нет доступа к микрофону. Проверь разрешения браузера.';
+      setDrawerTab('tracking');
+      setDrawerOpen(true);
+      showToast(`Микрофон: ${msg}`, 3400);
+    }
+  }, [micStatus, showToast]);
+
+  const handleManualRecordRepeater = useCallback(async () => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    if (micStatus === 'active') {
+      stage.audio.stop();
+      setMicStatus('idle');
+    }
+
+    try {
+      setDemoSpeech(false);
+      setAnimationMode('live');
+      await stage.repeater.startManualRecording();
+      showToast('🎙️ Говори фразу и нажми «Повторить!»', 2800);
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Нет доступа к микрофону. Проверь разрешения браузера.';
+      setDrawerTab('tracking');
+      setDrawerOpen(true);
+      showToast(`Микрофон: ${msg}`, 3400);
+    }
+  }, [micStatus, showToast]);
+
+  const handleStopRecordAndRepeat = useCallback(() => {
+    stageRef.current?.repeater.finishRecordingNow();
+  }, []);
+
+  const handleReplayBabyPhrase = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    setDemoSpeech(false);
+    setAnimationMode('live');
+    void stage.repeater.replayLast();
+  }, []);
+
+  // Hotkey R / К to toggle Baby Voice Repeater
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const key = e.key.toLowerCase();
+      if (key === 'r' || key === 'к') {
+        void handleToggleRepeater();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleToggleRepeater]);
 
   const handleToggleMouse = useCallback(() => {
     setMouseTracking((prev) => {
@@ -596,6 +694,7 @@ export const App: React.FC = () => {
             switchingChar={switchingChar}
             webcamStatus={webcamStatus}
             micStatus={micStatus}
+            repeaterPhase={repeater.phase}
             mouseTracking={mouseTracking}
             demoSpeech={demoSpeech}
             drawerOpen={drawerOpen}
@@ -605,6 +704,7 @@ export const App: React.FC = () => {
             onSelectCharacter={handleSelectCharacter}
             onToggleWebcam={() => void handleToggleWebcam()}
             onToggleMic={() => void handleToggleMic()}
+            onToggleRepeater={() => void handleToggleRepeater()}
             onToggleMouse={handleToggleMouse}
             onToggleDemoSpeech={handleToggleDemoSpeech}
             onHeadpat={handleHeadpat}
@@ -624,6 +724,109 @@ export const App: React.FC = () => {
             }}
           />
 
+          {/* Floating Baby Voice Repeater Live Pill */}
+          {(repeater.phase === 'listening' ||
+            repeater.phase === 'recording' ||
+            repeater.phase === 'speaking') && (
+            <div className="fixed left-1/2 top-[76px] z-30 -translate-x-1/2">
+              <div
+                className={`flex items-center gap-2.5 rounded-2xl border px-3.5 py-2 shadow-lg backdrop-blur-xl transition-all ${
+                  repeater.phase === 'recording'
+                    ? 'border-rose-500/40 bg-rose-500/92 text-white'
+                    : repeater.phase === 'speaking'
+                      ? 'border-fuchsia-400/50 bg-gradient-to-r from-pink-500/92 to-violet-600/92 text-white'
+                      : darkUi
+                        ? 'border-violet-400/30 bg-slate-900/85 text-white'
+                        : 'border-violet-500/20 bg-white/88 text-slate-900'
+                }`}
+              >
+                <span className="text-base leading-none">
+                  {repeater.phase === 'recording'
+                    ? '🎙️'
+                    : repeater.phase === 'speaking'
+                      ? '👶'
+                      : '👂'}
+                </span>
+
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-2 text-xs font-bold leading-tight">
+                    <span>
+                      {repeater.phase === 'recording'
+                        ? `Записываю фразу… ${repeater.recordSeconds.toFixed(1)}с`
+                        : repeater.phase === 'speaking'
+                          ? `Повторяю голосом малыша (${settings.babyPitch.toFixed(2)}×)!`
+                          : repeater.autoListen
+                            ? 'Слушаю тебя — скажи любую фразу!'
+                            : 'Нажми «Записать», чтобы сказать фразу'}
+                    </span>
+                  </div>
+                  {(repeater.phase === 'listening' || repeater.phase === 'recording') && (
+                    <div className="mt-1 h-1 w-40 overflow-hidden rounded-full bg-black/15">
+                      <div
+                        className={`h-full rounded-full transition-all duration-75 ${
+                          repeater.phase === 'recording' ? 'bg-white' : 'bg-violet-500'
+                        }`}
+                        style={{ width: `${Math.min(100, Math.round(repeater.inputLevel * 100))}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {repeater.phase === 'recording' ? (
+                  <button
+                    type="button"
+                    onClick={handleStopRecordAndRepeat}
+                    className="flex cursor-pointer items-center gap-1 rounded-xl bg-white px-2.5 py-1 text-[11px] font-bold text-rose-600 shadow-xs hover:bg-rose-50"
+                  >
+                    <Square className="h-3 w-3 fill-current" />
+                    Повторить!
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void handleManualRecordRepeater()}
+                    disabled={repeater.phase === 'speaking'}
+                    className={`flex cursor-pointer items-center gap-1 rounded-xl px-2.5 py-1 text-[11px] font-bold transition-all disabled:opacity-40 ${
+                      repeater.phase === 'speaking'
+                        ? 'bg-white/20 text-white'
+                        : 'bg-rose-500 text-white hover:bg-rose-600'
+                    }`}
+                  >
+                    <Mic className="h-3 w-3" />
+                    Записать
+                  </button>
+                )}
+
+                {repeater.hasRecording && repeater.phase !== 'recording' && (
+                  <button
+                    type="button"
+                    onClick={handleReplayBabyPhrase}
+                    title="Повторить последнюю фразу ещё раз"
+                    className={`flex cursor-pointer items-center gap-1 rounded-xl px-2 py-1 text-[11px] font-bold transition-all ${
+                      repeater.phase === 'speaking'
+                        ? 'bg-white/20 text-white hover:bg-white/30'
+                        : darkUi
+                          ? 'bg-white/12 text-white hover:bg-white/20'
+                          : 'bg-violet-500/15 text-violet-900 hover:bg-violet-500/25'
+                    }`}
+                  >
+                    <Volume2 className="h-3 w-3" />
+                    Ещё раз
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => void handleToggleRepeater()}
+                  title="Выключить Повторяшку (R)"
+                  className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-lg bg-black/10 transition-colors hover:bg-black/20"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+
           <StudioDrawer
             open={drawerOpen}
             tab={drawerTab}
@@ -634,6 +837,7 @@ export const App: React.FC = () => {
             webcamStatus={webcamStatus}
             webcamError={webcamError}
             micError={micError}
+            repeater={repeater}
             telemetry={telemetry}
             settings={settings}
             background={background}
@@ -650,6 +854,10 @@ export const App: React.FC = () => {
             onAttachPreviewCanvas={handleAttachPreviewCanvas}
             onCalibrateWebcam={handleCalibrateWebcam}
             onToggleWebcam={() => void handleToggleWebcam()}
+            onToggleRepeater={() => void handleToggleRepeater()}
+            onManualRecordRepeater={() => void handleManualRecordRepeater()}
+            onStopRecordAndRepeat={handleStopRecordAndRepeat}
+            onReplayBabyPhrase={handleReplayBabyPhrase}
             onTestArms={handleTestArms}
             onUpdateSettings={handleUpdateSettings}
             onSelectBackground={setBackground}
@@ -675,7 +883,7 @@ export const App: React.FC = () => {
             }`}
           >
             <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-            <span>C — кастомка · 1–8 эмоции · H — OBS</span>
+            <span>R — повторяшка · C — кастомка · 1–8 эмоции · H — OBS</span>
           </div>
         </>
       )}
@@ -694,7 +902,16 @@ export const App: React.FC = () => {
 
       {/* Floating Toast Notification */}
       {toast && (
-        <div className="pointer-events-none fixed left-1/2 top-[76px] z-40 -translate-x-1/2">
+        <div
+          className={`pointer-events-none fixed left-1/2 z-40 -translate-x-1/2 transition-all ${
+            !obsMode &&
+            (repeater.phase === 'listening' ||
+              repeater.phase === 'recording' ||
+              repeater.phase === 'speaking')
+              ? 'top-[136px]'
+              : 'top-[76px]'
+          }`}
+        >
           <div className="rounded-2xl bg-slate-900/88 px-4 py-2 text-xs font-semibold text-white shadow-xl backdrop-blur-md">
             {toast}
           </div>

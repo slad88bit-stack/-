@@ -9,6 +9,7 @@ import {
   MicOff,
   MousePointer2,
   Palette,
+  Repeat2,
   SlidersHorizontal,
   Video,
   VideoOff,
@@ -17,6 +18,7 @@ import {
   CHARACTERS,
   type CharacterId,
   type MicStatus,
+  type RepeaterPhase,
   type TelemetrySnapshot,
   type WebcamStatus,
 } from '../types/vtuber';
@@ -26,6 +28,7 @@ interface TopBarProps {
   switchingChar: boolean;
   webcamStatus: WebcamStatus;
   micStatus: MicStatus;
+  repeaterPhase: RepeaterPhase;
   mouseTracking: boolean;
   demoSpeech: boolean;
   drawerOpen: boolean;
@@ -35,6 +38,7 @@ interface TopBarProps {
   onSelectCharacter: (id: CharacterId) => void;
   onToggleWebcam: () => void;
   onToggleMic: () => void;
+  onToggleRepeater: () => void;
   onToggleMouse: () => void;
   onToggleDemoSpeech: () => void;
   onHeadpat: () => void;
@@ -49,6 +53,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   switchingChar,
   webcamStatus,
   micStatus,
+  repeaterPhase,
   mouseTracking,
   demoSpeech,
   drawerOpen,
@@ -58,6 +63,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onSelectCharacter,
   onToggleWebcam,
   onToggleMic,
+  onToggleRepeater,
   onToggleMouse,
   onToggleDemoSpeech,
   onHeadpat,
@@ -76,33 +82,45 @@ export const TopBar: React.FC<TopBarProps> = ({
     : 'text-slate-700 hover:bg-slate-900/6 border-transparent';
 
   const armsTracked = telemetry.armLDetected || telemetry.armRDetected;
+  const repeaterActive =
+    repeaterPhase === 'listening' || repeaterPhase === 'recording' || repeaterPhase === 'speaking';
   const statusText =
-    webcamStatus === 'active'
-      ? telemetry.faceDetected && armsTracked
-        ? 'Лицо + руки'
-        : telemetry.faceDetected
-          ? 'Камера · лицо'
-          : armsTracked
-            ? 'Камера · руки'
-            : 'Камера · поиск…'
-      : webcamStatus === 'loading'
-        ? 'Загрузка…'
-        : demoSpeech
-          ? 'Демо-речь'
-          : micStatus === 'active'
-            ? 'Микрофон'
-            : mouseTracking
-              ? 'Курсор'
-              : 'Свободный';
+    repeaterPhase === 'recording'
+      ? 'Слушаю фразу…'
+      : repeaterPhase === 'speaking'
+        ? 'Повторяю!'
+        : webcamStatus === 'active'
+          ? telemetry.faceDetected && armsTracked
+            ? 'Лицо + руки'
+            : telemetry.faceDetected
+              ? 'Камера · лицо'
+              : armsTracked
+                ? 'Камера · руки'
+                : 'Камера · поиск…'
+          : webcamStatus === 'loading'
+            ? 'Загрузка…'
+            : repeaterPhase === 'listening'
+              ? 'Повторяшка'
+              : demoSpeech
+                ? 'Демо-речь'
+                : micStatus === 'active'
+                  ? 'Микрофон'
+                  : mouseTracking
+                    ? 'Курсор'
+                    : 'Свободный';
 
   const statusDotColor =
-    webcamStatus === 'active'
-      ? telemetry.faceDetected || armsTracked
-        ? 'bg-emerald-500'
-        : 'bg-amber-400 animate-pulse'
-      : demoSpeech || micStatus === 'active'
-        ? 'bg-sky-500'
-        : 'bg-amber-400';
+    repeaterPhase === 'recording'
+      ? 'bg-rose-500 animate-ping'
+      : repeaterPhase === 'speaking'
+        ? 'bg-fuchsia-500 animate-pulse'
+        : webcamStatus === 'active'
+          ? telemetry.faceDetected || armsTracked
+            ? 'bg-emerald-500'
+            : 'bg-amber-400 animate-pulse'
+          : repeaterPhase === 'listening' || demoSpeech || micStatus === 'active'
+            ? 'bg-sky-500'
+            : 'bg-amber-400';
 
   return (
     <header className="pointer-events-none fixed inset-x-0 top-0 z-30 flex flex-wrap items-center justify-between gap-2 px-3 py-3 sm:flex-nowrap sm:px-4">
@@ -215,6 +233,37 @@ export const TopBar: React.FC<TopBarProps> = ({
           )}
           <span className="hidden md:inline">Микрофон</span>
           {micStatus === 'active' && telemetry.isTalking && (
+            <span className="h-1.5 w-1.5 animate-ping rounded-full bg-white" />
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={onToggleRepeater}
+          title="Повторяшка: слушает твою фразу и повторяет голосом малыша (клавиша R)"
+          className={`relative flex cursor-pointer items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-bold transition-all ${
+            repeaterPhase === 'recording'
+              ? 'border-rose-500/50 bg-rose-500 text-white shadow-sm shadow-rose-500/35'
+              : repeaterPhase === 'speaking'
+                ? 'border-fuchsia-500/50 bg-gradient-to-r from-pink-500 to-violet-500 text-white shadow-sm shadow-fuchsia-500/35'
+                : repeaterActive
+                  ? 'border-violet-500/45 bg-violet-500 text-white shadow-sm shadow-violet-500/30'
+                  : darkUi
+                    ? 'border-violet-400/25 bg-violet-500/18 text-violet-200 hover:bg-violet-500/30'
+                    : 'border-violet-500/20 bg-violet-500/12 text-violet-900 hover:bg-violet-500/22'
+          }`}
+        >
+          <Repeat2 className={`h-3.5 w-3.5 ${repeaterPhase === 'speaking' ? 'animate-spin' : ''}`} />
+          <span className="hidden sm:inline">
+            {repeaterPhase === 'recording'
+              ? 'Запись…'
+              : repeaterPhase === 'speaking'
+                ? 'Повторяю!'
+                : repeaterPhase === 'listening'
+                  ? 'Слушаю…'
+                  : 'Повторяшка'}
+          </span>
+          {repeaterPhase === 'recording' && (
             <span className="h-1.5 w-1.5 animate-ping rounded-full bg-white" />
           )}
         </button>

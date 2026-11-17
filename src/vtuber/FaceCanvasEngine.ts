@@ -307,9 +307,19 @@ export class FaceCanvasEngine {
       // Authentic Roblox Classic/Modern Guest vertical rounded pill eyes!
       const pillW = (emotion === 'surprised' ? 34 : 28) * sc;
       const pillH = (emotion === 'surprised' ? 68 : 60) * sc;
+      const r = Math.min(pillW, pillH);
       ctx.fillStyle = eyeColor;
       ctx.beginPath();
-      ctx.roundRect(-pillW, -pillH, pillW * 2, pillH * 2, pillW);
+      ctx.moveTo(-pillW + r, -pillH);
+      ctx.lineTo(pillW - r, -pillH);
+      ctx.quadraticCurveTo(pillW, -pillH, pillW, -pillH + r);
+      ctx.lineTo(pillW, pillH - r);
+      ctx.quadraticCurveTo(pillW, pillH, pillW - r, pillH);
+      ctx.lineTo(-pillW + r, pillH);
+      ctx.quadraticCurveTo(-pillW, pillH, -pillW, pillH - r);
+      ctx.lineTo(-pillW, -pillH + r);
+      ctx.quadraticCurveTo(-pillW, -pillH, -pillW + r, -pillH);
+      ctx.closePath();
       ctx.fill();
 
       if (emotion === 'surprised') {

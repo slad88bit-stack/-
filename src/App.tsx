@@ -158,22 +158,33 @@ export const App: React.FC = () => {
     if (!container) return;
 
     const initial = loadSavedRosterState();
-    const stage = new VTuberStage(
-      container,
-      'noob',
-      initial.customByChar.noob,
-      initial.accByChar.noob,
-      {
-        onLoaded: () => setLoading(false),
-        onCharacterSwitching: (sw) => setSwitchingChar(sw),
-        onError: (msg) => {
-          setLoading(false);
-          setLoadError(msg);
+    let stage: VTuberStage;
+    try {
+      stage = new VTuberStage(
+        container,
+        'noob',
+        initial.customByChar.noob,
+        initial.accByChar.noob,
+        {
+          onLoaded: () => setLoading(false),
+          onCharacterSwitching: (sw) => setSwitchingChar(sw),
+          onError: (msg) => {
+            setLoading(false);
+            setLoadError(msg);
+          },
+          onAnimationChange: (anim) => setAnimationMode(anim),
+          onTelemetry: (snap) => setTelemetry(snap),
         },
-        onAnimationChange: (anim) => setAnimationMode(anim),
-        onTelemetry: (snap) => setTelemetry(snap),
-      },
-    );
+      );
+    } catch (err) {
+      setLoading(false);
+      setLoadError(
+        err instanceof Error
+          ? `Не удалось инициализировать WebGL: ${err.message}`
+          : 'Не удалось инициализировать WebGL',
+      );
+      return;
+    }
     stageRef.current = stage;
 
     return () => {

@@ -110,8 +110,12 @@ function paintOverlaySlot(slot: DynamicCanvasSlot, baseColor: string, showOverla
   ctx.fillStyle = baseColor;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (showOverlay && overlay) {
-    // 2px inset guarantees border clamp pixels stay pure baseColor with zero bleed
-    ctx.drawImage(overlay, 2, 2, canvas.width - 4, canvas.height - 4);
+    try {
+      // 2px inset guarantees border clamp pixels stay pure baseColor with zero bleed
+      ctx.drawImage(overlay, 2, 2, canvas.width - 4, canvas.height - 4);
+    } catch {
+      // Ignore if image source isn't drawable
+    }
   }
   texture.needsUpdate = true;
 }
@@ -289,6 +293,8 @@ export class VTuberStage {
   // Multi-character rig cache
   private readonly characterCache = new Map<CharacterId, LoadedCharacter>();
   private activeChar: LoadedCharacter | null = null;
+  private pendingCharacterId: CharacterId | null = null;
+  private hasNotifiedLoaded = false;
   private activeAction: THREE.AnimationAction | null = null;
   private loadSeq = 0;
 
@@ -721,13 +727,16 @@ export class VTuberStage {
 
   private async activateCharacter(id: CharacterId, isInitial = false): Promise<void> {
     const seq = ++this.loadSeq;
-    if (!isInitial) {
+    this.pendingCharacterId = id;
+    if (!isInitial && this.hasNotifiedLoaded) {
       this.callbacks.onCharacterSwitching?.(true);
     }
 
     try {
       const nextChar = await this.loadCharacterRig(id);
       if (this.disposed || seq !== this.loadSeq) return;
+
+      this.pendingCharacterId = null;
 
       // Detach previous character cleanly
       if (this.activeChar && this.activeChar !== nextChar) {
@@ -753,13 +762,17 @@ export class VTuberStage {
       this.applyCustomizationToActiveChar();
       this.accessories.applyState(this.accessoriesState);
 
-      if (isInitial) {
+      if (!this.hasNotifiedLoaded) {
+        this.hasNotifiedLoaded = true;
         this.callbacks.onLoaded?.();
       } else {
         this.callbacks.onCharacterSwitching?.(false);
         this.callbacks.onAnimationChange?.('live');
       }
     } catch (err) {
+      if (seq === this.loadSeq) {
+        this.pendingCharacterId = null;
+      }
       this.callbacks.onCharacterSwitching?.(false);
       this.callbacks.onError?.(
         err instanceof Error ? `Ошибка загрузки персонажа: ${err.message}` : 'Ошибка загрузки 3D-модели',
@@ -833,6 +846,10 @@ export class VTuberStage {
     if (this.activeChar?.id === id) {
       this.applyCustomizationToActiveChar();
       this.accessories.applyState(this.accessoriesState);
+      return;
+    }
+    // Avoid cancelling an in-flight initial load of the exact same character!
+    if (this.pendingCharacterId === id) {
       return;
     }
     void this.activateCharacter(id, false);

@@ -2,19 +2,23 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import type {
-  AccessoriesState,
-  AnimationId,
-  BackgroundId,
-  CameraPresetId,
-  EmotionId,
-  LightingPresetId,
-  TelemetrySnapshot,
-  TrackingSettings,
+import {
+  DEFAULT_ACCESSORIES,
+  DEFAULT_TRACKING_SETTINGS,
+  getCharacterMeta,
+  type AccessoriesState,
+  type AnimationId,
+  type BackgroundId,
+  type CameraPresetId,
+  type CharacterCustomization,
+  type CharacterId,
+  type EmotionId,
+  type LightingPresetId,
+  type TelemetrySnapshot,
+  type TrackingSettings,
 } from '../types/vtuber';
-import { ANIMATIONS, DEFAULT_ACCESSORIES, DEFAULT_TRACKING_SETTINGS } from '../types/vtuber';
-import { BABY_NOOB_BLUE_HEX, FaceCanvasEngine } from './FaceCanvasEngine';
-import { buildHeadAccessories } from './AccessoriesBuilder';
+import { FaceCanvasEngine } from './FaceCanvasEngine';
+import { buildCharacterAccessories } from './AccessoriesBuilder';
 import { AudioLipSync, sampleDemoSpeech } from './AudioLipSync';
 import { WebcamTracker } from './WebcamTracker';
 
@@ -22,6 +26,26 @@ interface BoneRestPose {
   position: THREE.Vector3;
   quaternion: THREE.Quaternion;
   scale: THREE.Vector3;
+}
+
+interface DynamicCanvasSlot {
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  texture: THREE.CanvasTexture;
+  overlay: CanvasImageSource | null;
+}
+
+interface LoadedCharacter {
+  id: CharacterId;
+  root: THREE.Object3D;
+  meshes: THREE.Mesh[];
+  capMeshes: THREE.Mesh[];
+  bones: Map<string, THREE.Bone>;
+  boneRest: Map<string, BoneRestPose>;
+  mixer: THREE.AnimationMixer;
+  actions: Map<string, THREE.AnimationAction>;
+  materials: Map<string, THREE.MeshStandardMaterial>;
+  slots: Map<string, DynamicCanvasSlot>;
 }
 
 interface FloatingParticle {
@@ -37,10 +61,13 @@ interface CameraGoal {
   target: THREE.Vector3;
 }
 
-const CAMERA_PRESETS: Record<Exclude<CameraPresetId, 'free'>, { pos: [number, number, number]; target: [number, number, number] }> = {
-  portrait: { pos: [0, 1.06, 2.25], target: [0, 0.98, 0] },
-  fullbody: { pos: [0.18, 1.02, 3.35], target: [0, 0.78, 0] },
-  closeup: { pos: [0, 1.13, 1.62], target: [0, 1.11, 0] },
+const CAMERA_PRESETS: Record<
+  Exclude<CameraPresetId, 'free'>,
+  { pos: [number, number, number]; target: [number, number, number] }
+> = {
+  portrait: { pos: [0, 1.08, 2.28], target: [0, 0.99, 0] },
+  fullbody: { pos: [0.18, 1.02, 3.38], target: [0, 0.79, 0] },
+  closeup: { pos: [0, 1.15, 1.65], target: [0, 1.13, 0] },
 };
 
 function damp(current: number, target: number, lambda: number, dt: number): number {
@@ -49,6 +76,97 @@ function damp(current: number, target: number, lambda: number, dt: number): numb
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
+}
+
+function shadeHex(hex: string, delta: number): string {
+  const clean = hex.replace('#', '');
+  if (clean.length !== 6) return hex;
+  const r = clamp(parseInt(clean.slice(0, 2), 16) + delta, 0, 255);
+  const g = clamp(parseInt(clean.slice(2, 4), 16) + delta, 0, 255);
+  const b = clamp(parseInt(clean.slice(4, 6), 16) + delta, 0, 255);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function createDynamicSlot(
+  w: number,
+  h: number,
+  overlay: CanvasImageSource | null,
+): DynamicCanvasSlot {
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.flipY = false;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.anisotropy = 8;
+  return { canvas, ctx, texture, overlay };
+}
+
+function paintOverlaySlot(slot: DynamicCanvasSlot, baseColor: string, showOverlay: boolean): void {
+  const { ctx, canvas, overlay, texture } = slot;
+  ctx.fillStyle = baseColor;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (showOverlay && overlay) {
+    // 2px inset guarantees border clamp pixels stay pure baseColor with zero bleed
+    ctx.drawImage(overlay, 2, 2, canvas.width - 4, canvas.height - 4);
+  }
+  texture.needsUpdate = true;
+}
+
+function paintModernGuestArmSlot(slot: DynamicCanvasSlot, sleeveColor: string, skinColor: string): void {
+  const { ctx, canvas, texture } = slot;
+  const w = canvas.width;
+  const h = canvas.height;
+  // Exact pixel bands measured from mguest_arm.png (256x256):
+  // y=0..153 jacket sleeve, y=154..167 cuff, y=168..255 hand skin
+  ctx.fillStyle = sleeveColor;
+  ctx.fillRect(0, 0, w, Math.round(h * (154 / 256)));
+  ctx.fillStyle = shadeHex(sleeveColor, 18);
+  ctx.fillRect(0, Math.round(h * (154 / 256)), w, Math.round(h * (14 / 256)));
+  ctx.fillStyle = skinColor;
+  ctx.fillRect(0, Math.round(h * (168 / 256)), w, h - Math.round(h * (168 / 256)));
+  texture.needsUpdate = true;
+}
+
+function paintModernGuestLegSlot(slot: DynamicCanvasSlot, pantsColor: string, shoeColor: string): void {
+  const { ctx, canvas, texture } = slot;
+  const w = canvas.width;
+  const h = canvas.height;
+  // Exact pixel bands measured from mguest_leg.png (256x256):
+  // y=0..139 denim jeans, y=140..151 dark cuff, y=152..207 sneaker upper + white laces, y=208..255 rubber sole
+  const yCuff = Math.round(h * (140 / 256));
+  const yShoe = Math.round(h * (152 / 256));
+  const ySole = Math.round(h * (208 / 256));
+
+  ctx.fillStyle = pantsColor;
+  ctx.fillRect(0, 0, w, yCuff);
+  ctx.fillStyle = shadeHex(pantsColor, -14);
+  ctx.fillRect(0, yCuff, w, yShoe - yCuff);
+  ctx.fillStyle = shoeColor;
+  ctx.fillRect(0, yShoe, w, ySole - yShoe);
+
+  // Crisp sneaker tongue laces matching original mguest_leg.png
+  ctx.fillStyle = '#eceff3';
+  ctx.fillRect(Math.round(w * 0.383), Math.round(h * 0.609), Math.round(w * 0.234), Math.round(h * 0.055));
+  ctx.fillRect(Math.round(w * 0.406), Math.round(h * 0.68), Math.round(w * 0.188), Math.round(h * 0.043));
+
+  // Classic crisp light-gray rubber sole
+  ctx.fillStyle = '#d7dae0';
+  ctx.fillRect(0, ySole, w, h - ySole);
+  texture.needsUpdate = true;
+}
+
+function loadImage(src: string): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
 }
 
 function createGradientTexture(stops: Array<[number, string]>): THREE.CanvasTexture {
@@ -136,6 +254,7 @@ function createParticleTexture(kind: 'heart' | 'star' | 'bokeh'): THREE.CanvasTe
 
 export interface StageCallbacks {
   onLoaded?: () => void;
+  onCharacterSwitching?: (switching: boolean) => void;
   onError?: (msg: string) => void;
   onAnimationChange?: (anim: AnimationId) => void;
   onTelemetry?: (snapshot: TelemetrySnapshot) => void;
@@ -149,6 +268,7 @@ export class VTuberStage {
   private readonly scene: THREE.Scene;
   private readonly camera: THREE.PerspectiveCamera;
   private readonly controls: OrbitControls;
+  private readonly loader = new GLTFLoader();
 
   // Lighting
   private readonly hemiLight: THREE.HemisphereLight;
@@ -166,27 +286,26 @@ export class VTuberStage {
   private readonly nightBokehGroup = new THREE.Group();
   private readonly bgTextures: Record<'studio' | 'roblox_meadow' | 'cozy_night', THREE.CanvasTexture>;
 
-  // Character rig & animations
-  private characterRoot: THREE.Object3D | null = null;
-  private characterMeshes: THREE.Object3D[] = [];
-  private bones = new Map<string, THREE.Bone>();
-  private boneRest = new Map<string, BoneRestPose>();
-  private mixer: THREE.AnimationMixer | null = null;
-  private actions = new Map<string, THREE.AnimationAction>();
+  // Multi-character rig cache
+  private readonly characterCache = new Map<CharacterId, LoadedCharacter>();
+  private activeChar: LoadedCharacter | null = null;
   private activeAction: THREE.AnimationAction | null = null;
+  private loadSeq = 0;
 
   // VTuber subsystems
   private readonly faceEngine = new FaceCanvasEngine();
-  private readonly accessories = buildHeadAccessories();
+  private readonly accessories = buildCharacterAccessories();
   public readonly webcam = new WebcamTracker();
   public readonly audio = new AudioLipSync();
 
-  // Particles (headpat hearts/stars)
+  // Particles
   private readonly heartTex = createParticleTexture('heart');
   private readonly starTex = createParticleTexture('star');
   private readonly particles: FloatingParticle[] = [];
 
   // Runtime state
+  private characterId: CharacterId = 'noob';
+  private customization: CharacterCustomization = { ...getCharacterMeta('noob').defaultCustomization };
   private emotion: EmotionId = 'happy';
   private animationMode: AnimationId = 'live';
   private backgroundId: BackgroundId = 'studio';
@@ -221,7 +340,7 @@ export class VTuberStage {
 
   // Auto-blink state machine
   private nextBlinkAt = 2.6;
-  private blinkPhase = -1; // -1 = idle, 0..1 = blinking
+  private blinkPhase = -1;
   private blinkDuration = 0.16;
   private doubleBlinkQueued = false;
 
@@ -238,13 +357,20 @@ export class VTuberStage {
   private currentFps = 60;
   private disposed = false;
 
-  // Reusable math objects
   private readonly tmpEuler = new THREE.Euler(0, 0, 0, 'YXZ');
   private readonly tmpQuat = new THREE.Quaternion();
-  private readonly tmpVec = new THREE.Vector3();
 
-  constructor(container: HTMLElement, callbacks: StageCallbacks = {}) {
+  constructor(
+    container: HTMLElement,
+    initialCharacter: CharacterId,
+    initialCustomization: CharacterCustomization,
+    initialAccessories: AccessoriesState,
+    callbacks: StageCallbacks = {},
+  ) {
     this.container = container;
+    this.characterId = initialCharacter;
+    this.customization = { ...initialCustomization };
+    this.accessoriesState = { ...initialAccessories };
     this.callbacks = callbacks;
 
     // 1. Renderer
@@ -255,7 +381,10 @@ export class VTuberStage {
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setSize(container.clientWidth || window.innerWidth, container.clientHeight || window.innerHeight);
+    this.renderer.setSize(
+      container.clientWidth || window.innerWidth,
+      container.clientHeight || window.innerHeight,
+    );
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.06;
@@ -272,7 +401,9 @@ export class VTuberStage {
     pmrem.dispose();
 
     // 3. Camera & OrbitControls
-    const aspect = (container.clientWidth || window.innerWidth) / Math.max(1, container.clientHeight || window.innerHeight);
+    const aspect =
+      (container.clientWidth || window.innerWidth) /
+      Math.max(1, container.clientHeight || window.innerHeight);
     this.camera = new THREE.PerspectiveCamera(32, aspect, 0.1, 80);
     this.camera.position.set(...CAMERA_PRESETS.portrait.pos);
 
@@ -338,7 +469,6 @@ export class VTuberStage {
       ]),
     };
 
-    // Studio floor + sleek subtle podium disc
     this.studioFloor = new THREE.Mesh(
       new THREE.CircleGeometry(10, 64),
       new THREE.MeshStandardMaterial({ color: 0xeae5db, roughness: 0.92, metalness: 0 }),
@@ -356,7 +486,6 @@ export class VTuberStage {
     this.studioDisc.receiveShadow = true;
     this.stageGroup.add(this.studioDisc);
 
-    // Roblox Meadow Checker Grass (homage to Mat_Studio_Grass in baby_noob_animated.blend!)
     this.grassFloor = new THREE.Mesh(
       new THREE.PlaneGeometry(36, 36),
       new THREE.MeshStandardMaterial({
@@ -371,7 +500,6 @@ export class VTuberStage {
     this.grassFloor.visible = false;
     this.stageGroup.add(this.grassFloor);
 
-    // Stylized blocky Roblox clouds for Meadow scene
     const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0 });
     const cloudPositions: Array<[number, number, number, number]> = [
       [-4.2, 3.6, -8.5, 1.15],
@@ -394,7 +522,6 @@ export class VTuberStage {
     this.cloudGroup.visible = false;
     this.stageGroup.add(this.cloudGroup);
 
-    // Cozy night floating warm bokeh sprites
     const bokehTex = createParticleTexture('bokeh');
     for (let i = 0; i < 18; i++) {
       const mat = new THREE.SpriteMaterial({
@@ -415,7 +542,6 @@ export class VTuberStage {
     this.nightBokehGroup.visible = false;
     this.stageGroup.add(this.nightBokehGroup);
 
-    // Shadow-only floor for clean_white
     this.shadowFloor = new THREE.Mesh(
       new THREE.PlaneGeometry(12, 12),
       new THREE.ShadowMaterial({ opacity: 0.14 }),
@@ -429,141 +555,293 @@ export class VTuberStage {
     this.scene.add(this.stageGroup);
     this.setBackground('studio');
 
-    // 6. Bind DOM listeners
+    // 6. DOM listeners
     window.addEventListener('resize', this.handleResize);
     window.addEventListener('pointermove', this.handlePointerMove);
     this.renderer.domElement.addEventListener('pointerdown', this.handlePointerDown);
     this.renderer.domElement.addEventListener('pointerup', this.handlePointerUp);
 
-    // 7. Load exported Baby Noob GLB
-    void this.loadCharacter();
+    // 7. Load initial character
+    void this.activateCharacter(initialCharacter, true);
 
-    // 8. Start animation loop
+    // 8. Start loop
     this.lastTime = performance.now();
     this.rafId = requestAnimationFrame(this.tick);
   }
 
-  private async loadCharacter(): Promise<void> {
-    const loader = new GLTFLoader();
-    try {
-      const gltf = await loader.loadAsync('/models/baby_noob.glb');
-      if (this.disposed) return;
+  private async loadCharacterRig(id: CharacterId): Promise<LoadedCharacter> {
+    const cached = this.characterCache.get(id);
+    if (cached) return cached;
 
-      const root = gltf.scene;
-      this.characterRoot = root;
-      this.characterMeshes = [];
+    const meta = getCharacterMeta(id);
+    const gltf = await this.loader.loadAsync(meta.modelUrl);
+    const root = gltf.scene;
 
-      // Prepare composited Roblox chest badge texture (exact #0648a6 blue + 2px clean border for ClampToEdge)
-      const badgeTexture = await this.createTorsoBadgeTexture();
+    const meshes: THREE.Mesh[] = [];
+    const capMeshes: THREE.Mesh[] = [];
+    const bones = new Map<string, THREE.Bone>();
+    const boneRest = new Map<string, BoneRestPose>();
+    const materials = new Map<string, THREE.MeshStandardMaterial>();
+    const slots = new Map<string, DynamicCanvasSlot>();
 
-      root.traverse((obj) => {
-        if ((obj as THREE.Bone).isBone) {
-          const bone = obj as THREE.Bone;
-          this.bones.set(bone.name, bone);
-          this.boneRest.set(bone.name, {
-            position: bone.position.clone(),
-            quaternion: bone.quaternion.clone(),
-            scale: bone.scale.clone(),
-          });
+    const noobBadgeImg = id === 'noob' ? await loadImage('/textures/roblox_badge.png') : null;
+
+    root.traverse((obj) => {
+      if ((obj as THREE.Bone).isBone) {
+        const bone = obj as THREE.Bone;
+        bones.set(bone.name, bone);
+        boneRest.set(bone.name, {
+          position: bone.position.clone(),
+          quaternion: bone.quaternion.clone(),
+          scale: bone.scale.clone(),
+        });
+      }
+
+      if ((obj as THREE.Mesh).isMesh) {
+        const mesh = obj as THREE.Mesh;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        meshes.push(mesh);
+
+        if (mesh.name.includes('_Cap_')) {
+          capMeshes.push(mesh);
         }
 
-        if ((obj as THREE.Mesh).isMesh) {
-          const mesh = obj as THREE.Mesh;
-          mesh.castShadow = true;
-          mesh.receiveShadow = true;
-          this.characterMeshes.push(mesh);
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        if (!mat) return;
+        materials.set(mat.name, mat);
 
-          const mat = mesh.material as THREE.MeshStandardMaterial;
-          if (!mat) return;
+        // Head always uses the live 1024px VTuber FaceCanvasEngine
+        if (mesh.name === 'Baby_Head' || mat.name.endsWith('_Head')) {
+          mat.color.setHex(0xffffff);
+          mat.map = this.faceEngine.texture;
+          mat.roughness = 0.28;
+          mat.metalness = 0.0;
+          mat.needsUpdate = true;
+          return;
+        }
 
-          if (mesh.name === 'Baby_Head' || mat.name === 'Mat_BabyNoob_Head') {
+        // Prepare live recolorable overlay CanvasTextures for each character's specific materials
+        if (id === 'noob' && (mesh.name === 'Baby_Torso' || mat.name === 'Mat_BabyNoob_Torso')) {
+          if (!slots.has('torso')) {
+            const slot = createDynamicSlot(512, 256, noobBadgeImg);
+            slots.set('torso', slot);
+          }
+          mat.color.setHex(0xffffff);
+          mat.map = slots.get('torso')!.texture;
+          mat.roughness = 0.32;
+          mat.metalness = 0.0;
+          mat.needsUpdate = true;
+        } else if (id === 'guest') {
+          const origImg = (mat.map?.image as CanvasImageSource | undefined) ?? null;
+          if (mat.name === 'Mat_BabyGuest_Torso' && !slots.has('torso')) {
+            const slot = createDynamicSlot(512, 512, origImg);
+            slots.set('torso', slot);
             mat.color.setHex(0xffffff);
-            mat.map = this.faceEngine.texture;
-            mat.roughness = 0.28;
-            mat.metalness = 0.0;
-            mat.needsUpdate = true;
-          } else if (mesh.name === 'Baby_Torso' || mat.name === 'Mat_BabyNoob_Torso') {
-            if (badgeTexture) {
-              mat.color.setHex(0xffffff);
-              mat.map = badgeTexture;
-            }
-            mat.roughness = 0.32;
-            mat.metalness = 0.0;
-            mat.needsUpdate = true;
-          } else if (mat.name === 'Mat_BabyNoob_Limbs') {
-            mat.roughness = 0.28;
-            mat.metalness = 0.0;
-          } else if (mat.name === 'Mat_BabyNoob_Legs') {
-            mat.roughness = 0.34;
-            mat.metalness = 0.0;
+            mat.map = slot.texture;
+          } else if (mat.name === 'Mat_BabyGuest_ArmL' && !slots.has('armL')) {
+            const slot = createDynamicSlot(512, 512, origImg);
+            slots.set('armL', slot);
+            mat.color.setHex(0xffffff);
+            mat.map = slot.texture;
+          } else if (mat.name === 'Mat_BabyGuest_ArmR' && !slots.has('armR')) {
+            const slot = createDynamicSlot(512, 512, origImg);
+            slots.set('armR', slot);
+            mat.color.setHex(0xffffff);
+            mat.map = slot.texture;
+          } else if (mat.name === 'Mat_BabyGuest_CapDome' && !slots.has('capDome')) {
+            const slot = createDynamicSlot(256, 256, origImg);
+            slots.set('capDome', slot);
+            mat.color.setHex(0xffffff);
+            mat.map = slot.texture;
           }
+          mat.metalness = 0.0;
+          mat.needsUpdate = true;
+        } else if (id === 'modern_guest') {
+          const origImg = (mat.map?.image as CanvasImageSource | undefined) ?? null;
+          if (mat.name === 'Mat_ModGuest_Torso' && !slots.has('torso')) {
+            const slot = createDynamicSlot(512, 512, origImg);
+            slots.set('torso', slot);
+            mat.color.setHex(0xffffff);
+            mat.map = slot.texture;
+          } else if (mat.name === 'Mat_ModGuest_CapDome' && !slots.has('capDome')) {
+            const slot = createDynamicSlot(256, 256, origImg);
+            slots.set('capDome', slot);
+            mat.color.setHex(0xffffff);
+            mat.map = slot.texture;
+          } else if (mat.name === 'Mat_ModGuest_Arm' && !slots.has('modArm')) {
+            const slot = createDynamicSlot(256, 256, null);
+            slots.set('modArm', slot);
+            mat.color.setHex(0xffffff);
+            mat.map = slot.texture;
+          } else if (mat.name === 'Mat_ModGuest_Leg' && !slots.has('modLeg')) {
+            const slot = createDynamicSlot(256, 256, null);
+            slots.set('modLeg', slot);
+            mat.color.setHex(0xffffff);
+            mat.map = slot.texture;
+          }
+          mat.metalness = 0.0;
+          mat.needsUpdate = true;
         }
-      });
+      }
+    });
 
-      // Attach 3D VTuber accessories directly to Head bone so they move/squash with head!
-      const headBone = this.bones.get('Head');
-      if (headBone) {
-        headBone.add(this.accessories.root);
-        this.accessories.applyState(this.accessoriesState);
+    const mixer = new THREE.AnimationMixer(root);
+    mixer.addEventListener('finished', () => {
+      if (this.activeChar?.id === id && this.animationMode !== 'live') {
+        const animMeta = getCharacterMeta(id).animations.find((a) => a.id === this.animationMode);
+        if (animMeta && !animMeta.loop) {
+          this.setAnimationMode('live');
+          this.callbacks.onAnimationChange?.('live');
+        }
+      }
+    });
+
+    const actions = new Map<string, THREE.AnimationAction>();
+    for (const clip of gltf.animations) {
+      actions.set(clip.name, mixer.clipAction(clip));
+    }
+
+    const loaded: LoadedCharacter = {
+      id,
+      root,
+      meshes,
+      capMeshes,
+      bones,
+      boneRest,
+      mixer,
+      actions,
+      materials,
+      slots,
+    };
+
+    this.characterCache.set(id, loaded);
+    return loaded;
+  }
+
+  private async activateCharacter(id: CharacterId, isInitial = false): Promise<void> {
+    const seq = ++this.loadSeq;
+    if (!isInitial) {
+      this.callbacks.onCharacterSwitching?.(true);
+    }
+
+    try {
+      const nextChar = await this.loadCharacterRig(id);
+      if (this.disposed || seq !== this.loadSeq) return;
+
+      // Detach previous character cleanly
+      if (this.activeChar && this.activeChar !== nextChar) {
+        this.activeChar.mixer.stopAllAction();
+        this.resetCharacterBonesToRest(this.activeChar);
+        this.scene.remove(this.activeChar.root);
       }
 
-      // Setup AnimationMixer for all 5 authentic Blender actions
-      this.mixer = new THREE.AnimationMixer(root);
-      this.mixer.addEventListener('finished', () => {
-        // When a one-shot Blender animation (Wave / Spin) finishes, smoothly return to Live VTuber mode
-        if (this.animationMode !== 'live') {
-          const meta = ANIMATIONS.find((a) => a.id === this.animationMode);
-          if (meta && !meta.loop) {
-            this.setAnimationMode('live');
-            this.callbacks.onAnimationChange?.('live');
-          }
-        }
-      });
+      this.activeChar = nextChar;
+      this.characterId = id;
+      this.activeAction = null;
+      this.animationMode = 'live';
+      nextChar.mixer.stopAllAction();
+      this.resetCharacterBonesToRest(nextChar);
 
-      for (const clip of gltf.animations) {
-        const action = this.mixer.clipAction(clip);
-        this.actions.set(clip.name, action);
+      // Attach shared 3D accessories directly to the new character's Head & Torso bones
+      const headBone = nextChar.bones.get('Head');
+      if (headBone) headBone.add(this.accessories.headRoot);
+      const torsoBone = nextChar.bones.get('Torso');
+      if (torsoBone) torsoBone.add(this.accessories.torsoRoot);
+
+      this.scene.add(nextChar.root);
+      this.applyCustomizationToActiveChar();
+      this.accessories.applyState(this.accessoriesState);
+
+      if (isInitial) {
+        this.callbacks.onLoaded?.();
+      } else {
+        this.callbacks.onCharacterSwitching?.(false);
+        this.callbacks.onAnimationChange?.('live');
       }
-
-      this.scene.add(root);
-      this.callbacks.onLoaded?.();
     } catch (err) {
+      this.callbacks.onCharacterSwitching?.(false);
       this.callbacks.onError?.(
-        err instanceof Error ? `Ошибка загрузки модели: ${err.message}` : 'Ошибка загрузки модели Baby Noob',
+        err instanceof Error ? `Ошибка загрузки персонажа: ${err.message}` : 'Ошибка загрузки 3D-модели',
       );
     }
   }
 
-  private createTorsoBadgeTexture(): Promise<THREE.CanvasTexture | null> {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        const w = 512;
-        const h = 256;
-        const c = document.createElement('canvas');
-        c.width = w;
-        c.height = h;
-        const ctx = c.getContext('2d')!;
-        // Exact Mat_BabyNoob_Torso sRGB blue fill
-        ctx.fillStyle = BABY_NOOB_BLUE_HEX;
-        ctx.fillRect(0, 0, w, h);
-        // Draw badge cleanly inset by 2px so edge clamp pixels are guaranteed pure blue
-        ctx.drawImage(img, 2, 2, w - 4, h - 4);
-        const tex = new THREE.CanvasTexture(c);
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.flipY = false; // Verified from GLB TEXCOORD_0: corr(v, Y) = -1.000
-        tex.wrapS = THREE.ClampToEdgeWrapping;
-        tex.wrapT = THREE.ClampToEdgeWrapping;
-        tex.anisotropy = 8;
-        resolve(tex);
-      };
-      img.onerror = () => resolve(null);
-      img.src = '/textures/roblox_badge.png';
-    });
+  private applyCustomizationToActiveChar(): void {
+    const ch = this.activeChar;
+    if (!ch) return;
+    const c = this.customization;
+
+    // 1. Cap visibility & accessory positioning
+    for (const capMesh of ch.capMeshes) {
+      capMesh.visible = c.capVisible;
+    }
+    this.accessories.configureForCharacter(ch.id, c.capVisible);
+    this.accessories.setAccentColor(c.accessoryAccentColor);
+
+    // 2. Character-specific material & overlay updates
+    if (ch.id === 'noob') {
+      const torsoSlot = ch.slots.get('torso');
+      if (torsoSlot) paintOverlaySlot(torsoSlot, c.torsoColor, c.showPrint);
+
+      const limbsMat = ch.materials.get('Mat_BabyNoob_Limbs');
+      if (limbsMat) limbsMat.color.set(c.armsColor);
+
+      const legsMat = ch.materials.get('Mat_BabyNoob_Legs');
+      if (legsMat) legsMat.color.set(c.legsColor);
+    } else if (ch.id === 'guest') {
+      const torsoSlot = ch.slots.get('torso');
+      if (torsoSlot) paintOverlaySlot(torsoSlot, c.torsoColor, c.showPrint);
+
+      const armLSlot = ch.slots.get('armL');
+      if (armLSlot) paintOverlaySlot(armLSlot, c.armsColor, c.showPrint);
+
+      const armRSlot = ch.slots.get('armR');
+      if (armRSlot) paintOverlaySlot(armRSlot, c.armsColor, c.showPrint);
+
+      const capDomeSlot = ch.slots.get('capDome');
+      if (capDomeSlot) paintOverlaySlot(capDomeSlot, c.capDomeColor, c.showPrint);
+
+      const capRedMat = ch.materials.get('Mat_BabyGuest_CapRed');
+      if (capRedMat) capRedMat.color.set(c.capAccentColor);
+
+      const legsMat = ch.materials.get('Mat_BabyGuest_Legs');
+      if (legsMat) legsMat.color.set(c.legsColor);
+    } else if (ch.id === 'modern_guest') {
+      const torsoSlot = ch.slots.get('torso');
+      if (torsoSlot) paintOverlaySlot(torsoSlot, c.torsoColor, c.showPrint);
+
+      const capDomeSlot = ch.slots.get('capDome');
+      if (capDomeSlot) paintOverlaySlot(capDomeSlot, c.capDomeColor, c.showPrint);
+
+      const capBlackMat = ch.materials.get('Mat_ModGuest_CapBlack');
+      if (capBlackMat) capBlackMat.color.set(c.capAccentColor);
+
+      const modArmSlot = ch.slots.get('modArm');
+      if (modArmSlot) paintModernGuestArmSlot(modArmSlot, c.armsColor, c.skinColor);
+
+      const modLegSlot = ch.slots.get('modLeg');
+      if (modLegSlot) paintModernGuestLegSlot(modLegSlot, c.legsColor, c.shoeColor);
+    }
   }
 
   // --- PUBLIC CONTROLS ---
+
+  public setCharacter(id: CharacterId, custom: CharacterCustomization, accessories: AccessoriesState): void {
+    this.customization = { ...custom };
+    this.accessoriesState = { ...accessories };
+    if (this.activeChar?.id === id) {
+      this.applyCustomizationToActiveChar();
+      this.accessories.applyState(this.accessoriesState);
+      return;
+    }
+    void this.activateCharacter(id, false);
+  }
+
+  public setCustomization(custom: CharacterCustomization): void {
+    this.customization = { ...custom };
+    this.applyCustomizationToActiveChar();
+  }
 
   public setEmotion(emotion: EmotionId): void {
     this.emotion = emotion;
@@ -573,10 +851,13 @@ export class VTuberStage {
     if (this.animationMode === mode) return;
     this.animationMode = mode;
 
+    const ch = this.activeChar;
+    if (!ch) return;
+
     if (mode === 'live') {
-      this.mixer?.stopAllAction();
+      ch.mixer.stopAllAction();
       this.activeAction = null;
-      this.resetBonesToRest();
+      this.resetCharacterBonesToRest(ch);
       return;
     }
 
@@ -585,8 +866,8 @@ export class VTuberStage {
       this.activeAction = null;
     }
 
-    const action = this.actions.get(mode);
-    const meta = ANIMATIONS.find((a) => a.id === mode);
+    const action = ch.actions.get(mode);
+    const meta = getCharacterMeta(ch.id).animations.find((a) => a.id === mode);
     if (action) {
       action.reset();
       if (meta && !meta.loop) {
@@ -614,6 +895,7 @@ export class VTuberStage {
         this.scene.background = this.bgTextures.studio;
         this.studioFloor.visible = true;
         this.studioDisc.visible = true;
+        (this.studioDisc.material as THREE.MeshStandardMaterial).color.setHex(0xfbf9f4);
         break;
       case 'roblox_meadow':
         this.scene.background = this.bgTextures.roblox_meadow;
@@ -636,10 +918,6 @@ export class VTuberStage {
         this.scene.background = new THREE.Color('#f8fafc');
         this.shadowFloor.visible = true;
         break;
-    }
-
-    if (id === 'studio') {
-      (this.studioDisc.material as THREE.MeshStandardMaterial).color.setHex(0xfbf9f4);
     }
   }
 
@@ -773,8 +1051,7 @@ export class VTuberStage {
   };
 
   private handlePointerUp = (e: PointerEvent): void => {
-    if (!this.settings.headpatEnabled) return;
-    // Ignore orbit drags
+    if (!this.settings.headpatEnabled || !this.activeChar) return;
     const moved = Math.hypot(e.clientX - this.pointerDownPos.x, e.clientY - this.pointerDownPos.y);
     if (moved > 8) return;
 
@@ -784,18 +1061,18 @@ export class VTuberStage {
       -(((e.clientY - rect.top) / rect.height) * 2 - 1),
     );
     this.raycaster.setFromCamera(ndc, this.camera);
-    const hits = this.raycaster.intersectObjects(this.characterMeshes, false);
+    const hits = this.raycaster.intersectObjects(this.activeChar.meshes, false);
     if (hits.length > 0) {
       this.triggerHeadpat();
     }
   };
 
   private spawnHeadpatParticles(): void {
-    const headBone = this.bones.get('Head');
+    const headBone = this.activeChar?.bones.get('Head');
     const origin = new THREE.Vector3(0, 1.5, 0.15);
     if (headBone) {
       headBone.getWorldPosition(origin);
-      origin.y += 0.72;
+      origin.y += 0.74;
       origin.z += 0.12;
     }
 
@@ -817,7 +1094,11 @@ export class VTuberStage {
 
       this.particles.push({
         sprite,
-        velocity: new THREE.Vector3((Math.random() - 0.5) * 0.55, 0.75 + Math.random() * 0.6, (Math.random() - 0.5) * 0.25),
+        velocity: new THREE.Vector3(
+          (Math.random() - 0.5) * 0.55,
+          0.75 + Math.random() * 0.6,
+          (Math.random() - 0.5) * 0.25,
+        ),
         life: 0,
         maxLife: 0.95 + Math.random() * 0.45,
         baseScale: scale,
@@ -825,9 +1106,9 @@ export class VTuberStage {
     }
   }
 
-  private resetBonesToRest(): void {
-    for (const [name, bone] of this.bones.entries()) {
-      const rest = this.boneRest.get(name);
+  private resetCharacterBonesToRest(ch: LoadedCharacter): void {
+    for (const [name, bone] of ch.bones.entries()) {
+      const rest = ch.boneRest.get(name);
       if (!rest) continue;
       bone.position.copy(rest.position);
       bone.quaternion.copy(rest.quaternion);
@@ -845,7 +1126,6 @@ export class VTuberStage {
     this.lastTime = now;
     this.elapsed += dt;
 
-    // FPS tracking
     this.fpsFrames++;
     this.fpsAccum += dt;
     if (this.fpsAccum >= 0.5) {
@@ -854,13 +1134,13 @@ export class VTuberStage {
       this.fpsAccum = 0;
     }
 
-    // 1. Sample inputs: Webcam, Mic, Demo Speech, Mouse
+    // 1. Sample inputs
     const webcamActive = this.webcam.isActive();
     const camPose = webcamActive ? this.webcam.detect(this.settings.mirrorCamera) : null;
     const micSample = this.audio.sample(this.settings.micGain, dt);
     const demoSample = this.demoSpeech ? sampleDemoSpeech(this.elapsed) : null;
 
-    // 2. Compute target head pose, eyes, mouth, brows
+    // 2. Compute target pose
     const sens = this.settings.headSensitivity;
     let targetYaw = 0;
     let targetPitch = 0;
@@ -912,7 +1192,6 @@ export class VTuberStage {
       }
     }
 
-    // Mic or Demo Speech lip-sync takes priority / blends cleanly with webcam jawOpen
     const isLipSyncActive = this.audio.isActive() || this.demoSpeech || (webcamActive && faceDetected);
     if (this.audio.isActive()) {
       targetMouthOpen = Math.max(targetMouthOpen, micSample.mouthOpen);
@@ -925,14 +1204,12 @@ export class VTuberStage {
       targetMouthRound = demoSample.mouthRound;
     }
 
-    // Natural auto-blink when webcam is NOT providing real blinks
     const autoBlinkVal = this.updateAutoBlink(dt);
     if (!(webcamActive && faceDetected)) {
       targetBlinkL = autoBlinkVal;
       targetBlinkR = autoBlinkVal;
     }
 
-    // Headpat timer overrides eyes into happy squint + rosy blush + elastic squish!
     if (this.headpatTimer > 0) {
       this.headpatTimer = Math.max(0, this.headpatTimer - dt);
       const patFade = Math.min(1, this.headpatTimer * 2.5);
@@ -941,7 +1218,7 @@ export class VTuberStage {
     }
     this.headpatSquish = damp(this.headpatSquish, 0, 7.5, dt);
 
-    // 3. Smooth damping (user-controlled smoothing slider: higher = smoother/softer)
+    // 3. Smooth damping
     const poseLambda = THREE.MathUtils.lerp(22, 4.5, clamp(this.settings.smoothing, 0.05, 0.95));
     this.curYaw = damp(this.curYaw, targetYaw, poseLambda, dt);
     this.curPitch = damp(this.curPitch, targetPitch, poseLambda, dt);
@@ -966,11 +1243,16 @@ export class VTuberStage {
     this.curAudioLevel = damp(this.curAudioLevel, rawAudio, 16, dt);
     const isTalking = this.curMouthOpen > 0.14 || micSample.isTalking || Boolean(demoSample?.isTalking);
 
-    // 4. Update Live Face Texture on Baby_Head
+    // 4. Live Face Engine render (character-aware UV layout + custom colors & face style!)
     const patBlush = this.headpatTimer > 0 ? Math.min(1, this.headpatTimer * 1.4) : 0;
     const blushIntensity = clamp((this.accessoriesState.blushAlways ? 0.85 : 0) + patBlush, 0, 1);
 
     this.faceEngine.render({
+      characterId: this.characterId,
+      faceStyle: this.customization.faceStyle,
+      skinColor: this.customization.skinColor,
+      eyeColor: this.customization.eyeColor,
+      mouthColor: this.customization.mouthColor,
       emotion: this.emotion,
       blinkL: this.curBlinkL,
       blinkR: this.curBlinkR,
@@ -986,14 +1268,17 @@ export class VTuberStage {
       time: this.elapsed,
     });
 
-    // 5. Update Rig: Either Blender AnimationClip OR Live Procedural VTuber Rig
-    if (this.animationMode !== 'live' && this.mixer) {
-      this.mixer.update(dt);
-    } else if (this.bones.size > 0) {
-      this.applyProceduralVTuberRig(isTalking);
+    // 5. Active Rig update
+    const ch = this.activeChar;
+    if (ch) {
+      if (this.animationMode !== 'live') {
+        ch.mixer.update(dt);
+      } else if (ch.bones.size > 0) {
+        this.applyProceduralVTuberRig(ch, isTalking);
+      }
     }
 
-    // 6. Update Accessories, Stage Ambient Motion, Headpat Particles & Camera
+    // 6. Accessories, Stage & Particles
     this.accessories.update(this.elapsed, isTalking);
     this.updateStageAmbience(dt);
     this.updateParticles(dt);
@@ -1012,10 +1297,9 @@ export class VTuberStage {
     }
     this.controls.update();
 
-    // 7. Render frame
     this.renderer.render(this.scene, this.camera);
 
-    // 8. Push throttled telemetry (~15Hz) to React UI
+    // 7. Throttled Telemetry
     this.telemetryTimer += dt;
     if (this.telemetryTimer >= 0.066) {
       this.telemetryTimer = 0;
@@ -1071,12 +1355,11 @@ export class VTuberStage {
     return Math.sin(this.blinkPhase * Math.PI);
   }
 
-  private applyProceduralVTuberRig(isTalking: boolean): void {
+  private applyProceduralVTuberRig(ch: LoadedCharacter, isTalking: boolean): void {
     const t = this.elapsed;
     const bounce = this.settings.bouncePhysics;
     const sway = this.settings.bodySway;
 
-    // Gentle organic breathing + voice-reactive bounce + emotion body modifiers
     const breathe = Math.sin(t * 2.35);
     const voiceBounce = isTalking ? Math.abs(Math.sin(t * 14.5)) * this.curAudioLevel * 0.032 * bounce : 0;
 
@@ -1124,21 +1407,18 @@ export class VTuberStage {
         break;
     }
 
-    // Headpat elastic squash-and-stretch!
     const squishWave = Math.sin(this.headpatSquish * Math.PI * 2.5) * this.headpatSquish * 0.14 * bounce;
 
-    // 1. Root: kept planted cleanly
-    const rootBone = this.bones.get('Root');
-    const rootRest = this.boneRest.get('Root');
+    const rootBone = ch.bones.get('Root');
+    const rootRest = ch.boneRest.get('Root');
     if (rootBone && rootRest) {
       rootBone.position.copy(rootRest.position);
       rootBone.quaternion.copy(rootRest.quaternion);
       rootBone.scale.copy(rootRest.scale);
     }
 
-    // 2. Pelvis: subtle breathing bob, voice bounce, side shift & squash-and-stretch
-    const pelvis = this.bones.get('Pelvis');
-    const pelvisRest = this.boneRest.get('Pelvis');
+    const pelvis = ch.bones.get('Pelvis');
+    const pelvisRest = ch.boneRest.get('Pelvis');
     if (pelvis && pelvisRest) {
       const bobY = (breathe * 0.012 + voiceBounce + emoHop - Math.max(0, squishWave) * 0.12) * Math.max(0.25, bounce);
       pelvis.position.set(
@@ -1157,9 +1437,8 @@ export class VTuberStage {
       pelvis.scale.set(pelvisRest.scale.x * sx, pelvisRest.scale.y * sy, pelvisRest.scale.z * sx);
     }
 
-    // 3. Torso: natural secondary follow behind head + breathing expansion
-    const torso = this.bones.get('Torso');
-    const torsoRest = this.boneRest.get('Torso');
+    const torso = ch.bones.get('Torso');
+    const torsoRest = ch.boneRest.get('Torso');
     if (torso && torsoRest) {
       this.tmpEuler.set(
         this.curPitch * 0.28 * sway + breathe * 0.025,
@@ -1175,9 +1454,8 @@ export class VTuberStage {
       );
     }
 
-    // 4. Head: primary VTuber tracking bone (yaw, pitch, roll + voice nod + headpat bounce!)
-    const head = this.bones.get('Head');
-    const headRest = this.boneRest.get('Head');
+    const head = ch.bones.get('Head');
+    const headRest = ch.boneRest.get('Head');
     if (head && headRest) {
       const talkNod = isTalking ? Math.sin(t * 12) * this.curAudioLevel * 0.045 * bounce : 0;
       this.tmpEuler.set(
@@ -1192,44 +1470,33 @@ export class VTuberStage {
       head.scale.set(headRest.scale.x * hScaleX, headRest.scale.y * hScaleY, headRest.scale.z * hScaleX);
     }
 
-    // 5. Arms (Arm.L at +X, Arm.R at -X): lively organic idle swing + voice & emotion gestures!
-    const armL = this.bones.get('Arm.L');
-    const armLRest = this.boneRest.get('Arm.L');
+    const armL = ch.bones.get('Arm.L');
+    const armLRest = ch.boneRest.get('Arm.L');
     if (armL && armLRest) {
       const idleSwing = Math.sin(t * 2.35 + 0.4) * 0.08 * bounce;
       const talkGest = isTalking ? Math.sin(t * 9.5) * this.curAudioLevel * 0.22 * bounce : 0;
       const raise = (emoArmRaise + talkGest + Math.max(0, squishWave) * 0.9) * Math.max(0.35, bounce);
-      // Arm.L local rest is rotated ~-150deg around Z; rotating around local Z lifts/lowers arm cleanly
-      this.tmpEuler.set(
-        idleSwing + this.curPitch * 0.14,
-        0,
-        raise + idleSwing * 0.6 - this.curRoll * 0.2,
-      );
+      this.tmpEuler.set(idleSwing + this.curPitch * 0.14, 0, raise + idleSwing * 0.6 - this.curRoll * 0.2);
       armL.position.copy(armLRest.position);
       armL.quaternion.copy(armLRest.quaternion).multiply(this.tmpQuat.setFromEuler(this.tmpEuler));
       armL.scale.copy(armLRest.scale);
     }
 
-    const armR = this.bones.get('Arm.R');
-    const armRRest = this.boneRest.get('Arm.R');
+    const armR = ch.bones.get('Arm.R');
+    const armRRest = ch.boneRest.get('Arm.R');
     if (armR && armRRest) {
       const idleSwing = Math.sin(t * 2.35 + Math.PI + 0.4) * 0.08 * bounce;
       const talkGest = isTalking ? Math.sin(t * 9.5 + 1.1) * this.curAudioLevel * 0.22 * bounce : 0;
       const raise = (emoArmRaise + talkGest + Math.max(0, squishWave) * 0.9) * Math.max(0.35, bounce);
-      this.tmpEuler.set(
-        idleSwing + this.curPitch * 0.14,
-        0,
-        -(raise + idleSwing * 0.6) - this.curRoll * 0.2,
-      );
+      this.tmpEuler.set(idleSwing + this.curPitch * 0.14, 0, -(raise + idleSwing * 0.6) - this.curRoll * 0.2);
       armR.position.copy(armRRest.position);
       armR.quaternion.copy(armRRest.quaternion).multiply(this.tmpQuat.setFromEuler(this.tmpEuler));
       armR.scale.copy(armRRest.scale);
     }
 
-    // 6. Legs: grounded with cute counter-sway when hopping
     for (const side of ['Leg.L', 'Leg.R'] as const) {
-      const leg = this.bones.get(side);
-      const rest = this.boneRest.get(side);
+      const leg = ch.bones.get(side);
+      const rest = ch.boneRest.get(side);
       if (!leg || !rest) continue;
       const sign = side === 'Leg.L' ? 1 : -1;
       const kick = emoHop > 0.02 ? Math.sin(t * 7.2 + (sign > 0 ? 0 : Math.PI)) * 0.16 : 0;
@@ -1288,6 +1555,13 @@ export class VTuberStage {
     this.renderer.domElement.removeEventListener('pointerdown', this.handlePointerDown);
     this.renderer.domElement.removeEventListener('pointerup', this.handlePointerUp);
 
+    for (const ch of this.characterCache.values()) {
+      for (const slot of ch.slots.values()) {
+        slot.texture.dispose();
+      }
+    }
+    this.characterCache.clear();
+
     this.webcam.dispose();
     this.audio.stop();
     this.faceEngine.dispose();
@@ -1297,9 +1571,5 @@ export class VTuberStage {
     if (this.renderer.domElement.parentNode === this.container) {
       this.container.removeChild(this.renderer.domElement);
     }
-
-    // Silence unused private reference warning if characterRoot unused outside load
-    void this.characterRoot;
-    void this.tmpVec;
   }
 }

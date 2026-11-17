@@ -2,27 +2,37 @@ import React from 'react';
 import {
   AudioLines,
   Camera,
-  Download,
   EyeOff,
   Heart,
   Loader2,
   Mic,
   MicOff,
   MousePointer2,
+  Palette,
   SlidersHorizontal,
   Video,
   VideoOff,
 } from 'lucide-react';
-import type { MicStatus, TelemetrySnapshot, WebcamStatus } from '../types/vtuber';
+import {
+  CHARACTERS,
+  type CharacterId,
+  type MicStatus,
+  type TelemetrySnapshot,
+  type WebcamStatus,
+} from '../types/vtuber';
 
 interface TopBarProps {
+  characterId: CharacterId;
+  switchingChar: boolean;
   webcamStatus: WebcamStatus;
   micStatus: MicStatus;
   mouseTracking: boolean;
   demoSpeech: boolean;
   drawerOpen: boolean;
+  isCustomizerActive: boolean;
   darkUi: boolean;
   telemetry: TelemetrySnapshot;
+  onSelectCharacter: (id: CharacterId) => void;
   onToggleWebcam: () => void;
   onToggleMic: () => void;
   onToggleMouse: () => void;
@@ -30,17 +40,22 @@ interface TopBarProps {
   onHeadpat: () => void;
   onSnapshot: () => void;
   onEnterObsMode: () => void;
+  onOpenCustomizer: () => void;
   onToggleDrawer: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
+  characterId,
+  switchingChar,
   webcamStatus,
   micStatus,
   mouseTracking,
   demoSpeech,
   drawerOpen,
+  isCustomizerActive,
   darkUi,
   telemetry,
+  onSelectCharacter,
   onToggleWebcam,
   onToggleMic,
   onToggleMouse,
@@ -48,6 +63,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onHeadpat,
   onSnapshot,
   onEnterObsMode,
+  onOpenCustomizer,
   onToggleDrawer,
 }) => {
   const panelClass = darkUi
@@ -62,17 +78,17 @@ export const TopBar: React.FC<TopBarProps> = ({
   const statusText =
     webcamStatus === 'active'
       ? telemetry.faceDetected
-        ? 'Камера · лицо в кадре'
-        : 'Камера · поиск лица…'
+        ? 'Камера · лицо'
+        : 'Камера · поиск…'
       : webcamStatus === 'loading'
-        ? 'Загрузка трекинга…'
+        ? 'Загрузка…'
         : demoSpeech
-          ? 'Демо-речь активна'
+          ? 'Демо-речь'
           : micStatus === 'active'
-            ? 'Микрофон · липсинк'
+            ? 'Микрофон'
             : mouseTracking
-              ? 'Отслеживание курсора'
-              : 'Свободный режим';
+              ? 'Курсор'
+              : 'Свободный';
 
   const statusDotColor =
     webcamStatus === 'active'
@@ -84,44 +100,68 @@ export const TopBar: React.FC<TopBarProps> = ({
         : 'bg-amber-400';
 
   return (
-    <header className="pointer-events-none fixed inset-x-0 top-0 z-30 flex items-center justify-between gap-2 px-3 py-3 sm:px-4">
-      {/* Left Brand + Status */}
-      <div className={`pointer-events-auto flex items-center gap-2.5 rounded-2xl px-3 py-2 ${panelClass}`}>
-        <div
-          className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl shadow-inner"
-          style={{ background: 'linear-gradient(145deg, #f7d23b 0%, #e5b20d 100%)' }}
-        >
-          {/* Mini stylized Baby Noob face emblem */}
-          <svg viewBox="0 0 36 36" className="h-7 w-7" aria-hidden="true">
-            <circle cx="11.5" cy="15.5" r="2.6" fill="#0f172a" />
-            <circle cx="24.5" cy="15.5" r="2.6" fill="#0f172a" />
-            <path
-              d="M12.5 21.2 Q18 22.8 23.5 21.2 C23.5 26.8 21 29.2 18 29.2 C15 29.2 12.5 26.8 12.5 21.2 Z"
-              fill="#d8244e"
-              stroke="#0f172a"
-              strokeWidth="1.9"
-              strokeLinejoin="round"
+    <header className="pointer-events-none fixed inset-x-0 top-0 z-30 flex flex-wrap items-center justify-between gap-2 px-3 py-3 sm:flex-nowrap sm:px-4">
+      {/* Left Brand + 3-Character Quick Roster Switcher */}
+      <div className={`pointer-events-auto flex items-center gap-2 rounded-2xl p-1.5 pl-2.5 ${panelClass}`}>
+        <div className="hidden items-center gap-2 pr-1 lg:flex">
+          <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-300 to-amber-500 shadow-inner">
+            <svg viewBox="0 0 36 36" className="h-6 w-6" aria-hidden="true">
+              <circle cx="11.5" cy="15.5" r="2.6" fill="#0f172a" />
+              <circle cx="24.5" cy="15.5" r="2.6" fill="#0f172a" />
+              <path
+                d="M12.5 21.2 Q18 22.8 23.5 21.2 C23.5 26.8 21 29.2 18 29.2 C15 29.2 12.5 26.8 12.5 21.2 Z"
+                fill="#d8244e"
+                stroke="#0f172a"
+                strokeWidth="1.9"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <span
+              className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 ${
+                darkUi ? 'border-slate-900' : 'border-white'
+              } ${statusDotColor}`}
             />
-          </svg>
-          <span
-            className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 ${
-              darkUi ? 'border-slate-900' : 'border-white'
-            } ${statusDotColor}`}
-          />
+          </div>
+          <div className="leading-tight">
+            <div className="flex items-center gap-1">
+              <span className="font-display text-xs font-bold tracking-tight">VTuber</span>
+              <span className="font-mono-tech text-[10px] opacity-60">{telemetry.fps}</span>
+            </div>
+            <div className={`text-[10px] font-medium ${subtleText}`}>{statusText}</div>
+          </div>
         </div>
-        <div className="leading-tight">
-          <div className="flex items-center gap-1.5">
-            <span className="font-display text-sm font-bold tracking-tight sm:text-[15px]">
-              Baby Noob
-            </span>
-            <span className="rounded-md bg-[#0648a6] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
-              VTuber
-            </span>
-          </div>
-          <div className={`flex items-center gap-2 text-[11px] font-medium ${subtleText}`}>
-            <span>{statusText}</span>
-            <span className="hidden font-mono-tech opacity-75 sm:inline">{telemetry.fps} FPS</span>
-          </div>
+
+        {/* Character Roster Pills */}
+        <div
+          className={`flex items-center gap-1 rounded-xl p-0.5 ${darkUi ? 'bg-white/6' : 'bg-slate-900/5'}`}
+          role="group"
+          aria-label="Выбор персонажа"
+        >
+          {CHARACTERS.map((ch) => {
+            const active = characterId === ch.id;
+            return (
+              <button
+                key={ch.id}
+                type="button"
+                onClick={() => onSelectCharacter(ch.id)}
+                title={`${ch.name} — ${ch.subtitle}`}
+                className={`flex cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold transition-all ${
+                  active
+                    ? 'bg-[#0648a6] text-white shadow-sm'
+                    : darkUi
+                      ? 'text-slate-300 hover:bg-white/10 hover:text-white'
+                      : 'text-slate-700 hover:bg-white/80 hover:text-slate-950'
+                }`}
+              >
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-black/15"
+                  style={{ backgroundColor: ch.badgeColor }}
+                />
+                <span>{ch.shortName}</span>
+                {active && switchingChar && <Loader2 className="h-3 w-3 animate-spin" />}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -135,7 +175,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           onClick={onToggleWebcam}
           disabled={webcamStatus === 'loading'}
           title="Трекинг лица через веб-камеру (MediaPipe)"
-          className={`flex cursor-pointer items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition-all sm:px-3 ${
+          className={`flex cursor-pointer items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition-all ${
             webcamStatus === 'active'
               ? 'border-emerald-500/40 bg-emerald-500 text-white shadow-sm shadow-emerald-500/30'
               : webcamStatus === 'loading'
@@ -156,8 +196,8 @@ export const TopBar: React.FC<TopBarProps> = ({
         <button
           type="button"
           onClick={onToggleMic}
-          title="Липсинк по микрофону (реагирует на голос)"
-          className={`relative flex cursor-pointer items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition-all sm:px-3 ${
+          title="Липсинк по микрофону"
+          className={`relative flex cursor-pointer items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition-all ${
             micStatus === 'active'
               ? 'border-rose-500/40 bg-rose-500 text-white shadow-sm shadow-rose-500/30'
               : idleBtn
@@ -178,89 +218,89 @@ export const TopBar: React.FC<TopBarProps> = ({
           type="button"
           onClick={onToggleMouse}
           title="Поворот головы и взгляда за курсором"
-          className={`flex cursor-pointer items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition-all sm:px-3 ${
+          className={`flex cursor-pointer items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition-all ${
             mouseTracking && webcamStatus !== 'active' && !demoSpeech
-              ? 'border-[#0648a6]/30 bg-[#0648a6] text-white shadow-sm shadow-[#0648a6]/25'
+              ? 'border-[#0648a6]/30 bg-[#0648a6] text-white shadow-sm'
               : idleBtn
           }`}
         >
           <MousePointer2 className="h-3.5 w-3.5" />
-          <span className="hidden md:inline">Мышь</span>
+          <span className="hidden xl:inline">Мышь</span>
         </button>
 
         <button
           type="button"
           onClick={onToggleDemoSpeech}
-          title="Демонстрация речи и липсинка без микрофона"
-          className={`flex cursor-pointer items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition-all sm:px-3 ${
+          title="Демонстрация речи и липсинка"
+          className={`flex cursor-pointer items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition-all ${
             demoSpeech
-              ? 'border-amber-500/40 bg-amber-500 text-slate-950 shadow-sm shadow-amber-500/30'
+              ? 'border-amber-500/40 bg-amber-500 text-slate-950 shadow-sm'
               : idleBtn
           }`}
         >
           <AudioLines className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Демо-речь</span>
+          <span className="hidden xl:inline">Демо</span>
         </button>
       </nav>
 
-      {/* Right Quick Actions */}
+      {/* Right Quick Actions + Prominent Кастомка Button */}
       <div className={`pointer-events-auto flex items-center gap-1 rounded-2xl p-1.5 ${panelClass}`}>
         <button
           type="button"
+          onClick={onOpenCustomizer}
+          title="Кастомка персонажа — цвета, кепка, лицо, аксессуары (клавиша C)"
+          className={`flex cursor-pointer items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-all ${
+            isCustomizerActive
+              ? 'bg-gradient-to-r from-amber-400 to-orange-400 text-slate-950 shadow-sm'
+              : darkUi
+                ? 'bg-amber-400/20 text-amber-300 hover:bg-amber-400/30'
+                : 'bg-amber-400/25 text-amber-950 hover:bg-amber-400/40'
+          }`}
+        >
+          <Palette className="h-3.5 w-3.5" />
+          <span>Кастомка</span>
+        </button>
+
+        <button
+          type="button"
           onClick={onHeadpat}
-          title="Погладить Baby Noob (или кликни по персонажу)"
-          className={`flex cursor-pointer items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold transition-all ${
-            darkUi
-              ? 'text-pink-300 hover:bg-pink-500/20'
-              : 'text-rose-600 hover:bg-rose-500/10'
+          title="Погладить персонажа (Space)"
+          className={`flex cursor-pointer items-center gap-1 rounded-xl px-2 py-1.5 text-xs font-semibold transition-all ${
+            darkUi ? 'text-pink-300 hover:bg-pink-500/20' : 'text-rose-600 hover:bg-rose-500/10'
           }`}
         >
           <Heart className="h-3.5 w-3.5 fill-current" />
-          <span className="hidden xl:inline">Погладить</span>
         </button>
 
         <button
           type="button"
           onClick={onSnapshot}
           title="Скачать прозрачный PNG-стикер"
-          className={`flex cursor-pointer items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold transition-all ${idleBtn}`}
+          className={`flex cursor-pointer items-center gap-1 rounded-xl px-2 py-1.5 text-xs font-semibold transition-all ${idleBtn}`}
         >
           <Camera className="h-3.5 w-3.5" />
-          <span className="hidden xl:inline">PNG</span>
         </button>
-
-        <a
-          href="/models/baby_noob.glb"
-          download="baby_noob_vtuber.glb"
-          title="Скачать 3D-модель .GLB"
-          className={`hidden cursor-pointer items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold transition-all lg:flex ${idleBtn}`}
-        >
-          <Download className="h-3.5 w-3.5" />
-          <span className="hidden xl:inline">GLB</span>
-        </a>
 
         <button
           type="button"
           onClick={onEnterObsMode}
-          title="OBS режим — скрыть интерфейс (клавиша H)"
-          className={`flex cursor-pointer items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold transition-all ${idleBtn}`}
+          title="OBS режим — скрыть интерфейс (H)"
+          className={`flex cursor-pointer items-center gap-1 rounded-xl px-2 py-1.5 text-xs font-semibold transition-all ${idleBtn}`}
         >
           <EyeOff className="h-3.5 w-3.5" />
-          <span className="hidden lg:inline">OBS</span>
+          <span className="hidden xl:inline">OBS</span>
         </button>
 
         <button
           type="button"
           onClick={onToggleDrawer}
-          title="Настройки студии"
+          title="Открыть / скрыть панель студии"
           className={`flex cursor-pointer items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold transition-all ${
-            drawerOpen
-              ? 'bg-[#0648a6] text-white shadow-sm'
-              : idleBtn
+            drawerOpen && !isCustomizerActive ? 'bg-[#0648a6] text-white shadow-sm' : idleBtn
           }`}
         >
           <SlidersHorizontal className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Студия</span>
+          <span className="hidden lg:inline">Студия</span>
         </button>
       </div>
     </header>

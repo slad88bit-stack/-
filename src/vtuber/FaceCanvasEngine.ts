@@ -1,17 +1,50 @@
 import * as THREE from 'three';
-import type { EmotionId, FaceRenderState } from '../types/vtuber';
+import type { CharacterId, EmotionId, FaceRenderState, FaceStyleId } from '../types/vtuber';
 
-// Exact sRGB hex computed from Mat_BabyNoob_Head linear [0.8468732, 0.5332764, 0.0069954]
 export const BABY_NOOB_YELLOW_HEX = '#edc114';
 export const BABY_NOOB_BLUE_HEX = '#0648a6';
 
 const CANVAS_SIZE = 1024;
-const LEFT_EYE_X = 313;
-const RIGHT_EYE_X = 711;
-const EYE_Y = 558;
-const EYE_RADIUS = 32;
-const MOUTH_X = 512;
-const MOUTH_BASE_Y = 626;
+
+interface FaceLayout {
+  leftEyeX: number;
+  rightEyeX: number;
+  eyeY: number;
+  mouthX: number;
+  mouthBaseY: number;
+  scale: number; // relative feature scale for UV coverage
+}
+
+// Measured directly from original textures:
+// - face_open.png (1024x1024): eyes (313,558) & (711,558), mouth y=623..791
+// - guest_face_open.png (512x512 -> x2): eyes (372,392) & (652,392), mouth y=576..684
+// - mguest_face_open.png (512x512 -> x2): eyes (424,396) & (600,396), mouth y=588..708
+const FACE_LAYOUTS: Record<CharacterId, FaceLayout> = {
+  noob: {
+    leftEyeX: 313,
+    rightEyeX: 711,
+    eyeY: 558,
+    mouthX: 512,
+    mouthBaseY: 626,
+    scale: 1.0,
+  },
+  guest: {
+    leftEyeX: 372,
+    rightEyeX: 652,
+    eyeY: 392,
+    mouthX: 512,
+    mouthBaseY: 560,
+    scale: 1.18,
+  },
+  modern_guest: {
+    leftEyeX: 424,
+    rightEyeX: 600,
+    eyeY: 396,
+    mouthX: 512,
+    mouthBaseY: 572,
+    scale: 1.12,
+  },
+};
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
@@ -19,6 +52,15 @@ function clamp(v: number, min: number, max: number): number {
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
+}
+
+function darkenHex(hex: string, factor = 0.72): string {
+  const clean = hex.replace('#', '');
+  if (clean.length !== 6) return '#9b1332';
+  const r = Math.round(parseInt(clean.slice(0, 2), 16) * factor);
+  const g = Math.round(parseInt(clean.slice(2, 4), 16) * factor);
+  const b = Math.round(parseInt(clean.slice(4, 6), 16) * factor);
+  return `rgb(${clamp(r, 0, 255)}, ${clamp(g, 0, 255)}, ${clamp(b, 0, 255)})`;
 }
 
 export class FaceCanvasEngine {
@@ -34,14 +76,13 @@ export class FaceCanvasEngine {
 
     const ctx = this.canvas.getContext('2d');
     if (!ctx) {
-      throw new Error('Could not initialize 2D context for Baby Noob face texture');
+      throw new Error('Could not initialize 2D context for VTuber face texture');
     }
     this.ctx = ctx;
 
     this.texture = new THREE.CanvasTexture(this.canvas);
     this.texture.colorSpace = THREE.SRGBColorSpace;
-    // Verified from GLB TEXCOORD_0: corr(v, Y) = -1.000 => flipY MUST be false!
-    this.texture.flipY = false;
+    this.texture.flipY = false; // Verified across all 3 GLBs: corr(v, Y) = -1.000
     this.texture.wrapS = THREE.ClampToEdgeWrapping;
     this.texture.wrapT = THREE.ClampToEdgeWrapping;
     this.texture.anisotropy = 8;
@@ -49,8 +90,12 @@ export class FaceCanvasEngine {
     this.texture.minFilter = THREE.LinearMipmapLinearFilter;
     this.texture.magFilter = THREE.LinearFilter;
 
-    // Initial classic Baby Noob face render
     this.render({
+      characterId: 'noob',
+      faceStyle: 'auto',
+      skinColor: BABY_NOOB_YELLOW_HEX,
+      eyeColor: '#0c0c0c',
+      mouthColor: '#d8244e',
       emotion: 'happy',
       blinkL: 0,
       blinkR: 0,
@@ -67,11 +112,22 @@ export class FaceCanvasEngine {
     });
   }
 
+  private resolveFaceStyle(characterId: CharacterId, requested: FaceStyleId): Exclude<FaceStyleId, 'auto'> {
+    if (requested !== 'auto') return requested;
+    return characterId === 'noob' ? 'kawaii_dots' : 'classic_pills';
+  }
+
   public render(state: FaceRenderState): void {
+    const style = this.resolveFaceStyle(state.characterId, state.faceStyle);
     const isAnimatedEmotion = state.emotion === 'hype' || state.emotion === 'cry' || state.emotion === 'sleepy';
     const sig = isAnimatedEmotion
-      ? `${state.emotion}-${Math.floor(state.time * 30)}-${state.mouthOpen.toFixed(2)}-${state.blinkL.toFixed(2)}`
+      ? `${state.characterId}|${style}|${state.skinColor}|${state.eyeColor}|${state.mouthColor}|${state.emotion}|${Math.floor(state.time * 30)}|${state.mouthOpen.toFixed(2)}|${state.blinkL.toFixed(2)}`
       : [
+          state.characterId,
+          style,
+          state.skinColor,
+          state.eyeColor,
+          state.mouthColor,
           state.emotion,
           state.blinkL.toFixed(2),
           state.blinkR.toFixed(2),
@@ -89,77 +145,110 @@ export class FaceCanvasEngine {
     if (sig === this.lastSignature) return;
     this.lastSignature = sig;
 
+    const layout = FACE_LAYOUTS[state.characterId];
     const ctx = this.ctx;
     ctx.save();
 
-    // 1. Solid Baby Noob yellow base (ensures ClampToEdge outside UV [0..1] matches arms seamlessly!)
-    ctx.fillStyle = BABY_NOOB_YELLOW_HEX;
+    // 1. Solid head/skin base color (clamps seamlessly outside UV [0..1])
+    ctx.fillStyle = state.skinColor;
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-    const gx = clamp(state.gazeX, -1, 1) * 28;
-    const gy = clamp(state.gazeY, -1, 1) * 18;
+    const gx = clamp(state.gazeX, -1, 1) * 28 * layout.scale;
+    const gy = clamp(state.gazeY, -1, 1) * 18 * layout.scale;
 
-    // 2. Soft Kawaii Blush Cheeks (under eyes when blushing / headpat / hype / blushAlways)
+    // 2. Kawaii Blush Cheeks
     const totalBlush = clamp(
       state.blushIntensity +
-        (state.emotion === 'blush' ? 0.9 : 0) +
+        (state.emotion === 'blush' ? 0.92 : 0) +
         (state.emotion === 'hype' ? 0.55 : 0) +
         (state.emotion === 'wink' ? 0.35 : 0),
       0,
       1,
     );
     if (totalBlush > 0.02) {
-      this.drawBlush(ctx, totalBlush, gx * 0.25, gy * 0.2);
+      this.drawBlush(ctx, layout, totalBlush, gx * 0.25, gy * 0.2);
     }
 
-    // 3. Draw Left & Right Eyes
-    const effBlinkL = state.emotion === 'wink' ? 1.0 : state.emotion === 'blush' ? 1.0 : state.blinkL;
+    // 3. Left & Right Eyes
+    const effBlinkL = state.emotion === 'wink' || state.emotion === 'blush' ? 1.0 : state.blinkL;
     const effBlinkR = state.emotion === 'blush' ? 1.0 : state.blinkR;
 
-    this.drawEye(ctx, LEFT_EYE_X + gx, EYE_Y + gy, effBlinkL, state.emotion, true, state.time);
-    this.drawEye(ctx, RIGHT_EYE_X + gx, EYE_Y + gy, effBlinkR, state.emotion, false, state.time);
+    this.drawEye(
+      ctx,
+      layout.leftEyeX + gx,
+      layout.eyeY + gy,
+      effBlinkL,
+      state.emotion,
+      style,
+      state.skinColor,
+      state.eyeColor,
+      layout.scale,
+      true,
+      state.time,
+    );
+    this.drawEye(
+      ctx,
+      layout.rightEyeX + gx,
+      layout.eyeY + gy,
+      effBlinkR,
+      state.emotion,
+      style,
+      state.skinColor,
+      state.eyeColor,
+      layout.scale,
+      false,
+      state.time,
+    );
 
-    // 4. Optional expressive eyebrows (angry / surprised / cry / webcam brows)
-    this.drawEyebrows(ctx, state, gx * 0.4, gy * 0.4);
+    // 4. Expressive Eyebrows
+    this.drawEyebrows(ctx, layout, state, style, gx * 0.4, gy * 0.4);
 
-    // 5. Dynamic VTuber Mouth with Lip-Sync + Emotion Articulation
-    this.drawMouth(ctx, state, gx * 0.16, gy * 0.14);
+    // 5. Dynamic VTuber Mouth
+    this.drawMouth(ctx, layout, state, style, gx * 0.16, gy * 0.14);
 
     ctx.restore();
     this.texture.needsUpdate = true;
   }
 
-  private drawBlush(ctx: CanvasRenderingContext2D, intensity: number, ox: number, oy: number): void {
+  private drawBlush(
+    ctx: CanvasRenderingContext2D,
+    layout: FaceLayout,
+    intensity: number,
+    ox: number,
+    oy: number,
+  ): void {
+    const sc = layout.scale;
     const drawCheek = (cx: number, cy: number) => {
-      const grad = ctx.createRadialGradient(cx, cy, 8, cx, cy, 62);
-      grad.addColorStop(0, `rgba(255, 92, 128, ${0.56 * intensity})`);
-      grad.addColorStop(0.6, `rgba(255, 110, 140, ${0.32 * intensity})`);
-      grad.addColorStop(1, 'rgba(255, 110, 140, 0)');
+      const r = 60 * sc;
+      const grad = ctx.createRadialGradient(cx, cy, 8 * sc, cx, cy, r);
+      grad.addColorStop(0, `rgba(255, 92, 132, ${0.56 * intensity})`);
+      grad.addColorStop(0.6, `rgba(255, 110, 145, ${0.32 * intensity})`);
+      grad.addColorStop(1, 'rgba(255, 110, 145, 0)');
       ctx.save();
       ctx.translate(cx, cy);
       ctx.scale(1.25, 0.72);
       ctx.beginPath();
-      ctx.arc(0, 0, 62, 0, Math.PI * 2);
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
       ctx.fillStyle = grad;
       ctx.fill();
 
-      // Tiny anime blush hatch strokes when strong
       if (intensity > 0.45) {
         ctx.strokeStyle = `rgba(232, 62, 102, ${(intensity - 0.35) * 0.65})`;
-        ctx.lineWidth = 5;
+        ctx.lineWidth = 5 * sc;
         ctx.lineCap = 'round';
         for (let i = -1; i <= 1; i++) {
           ctx.beginPath();
-          ctx.moveTo(i * 18 - 4, 14);
-          ctx.lineTo(i * 18 + 6, -12);
+          ctx.moveTo((i * 18 - 4) * sc, 14 * sc);
+          ctx.lineTo((i * 18 + 6) * sc, -12 * sc);
           ctx.stroke();
         }
       }
       ctx.restore();
     };
 
-    drawCheek(LEFT_EYE_X - 24 + ox, EYE_Y + 72 + oy);
-    drawCheek(RIGHT_EYE_X + 24 + ox, EYE_Y + 72 + oy);
+    const dropY = 82 * sc;
+    drawCheek(layout.leftEyeX - 30 * sc + ox, layout.eyeY + dropY + oy);
+    drawCheek(layout.rightEyeX + 30 * sc + ox, layout.eyeY + dropY + oy);
   }
 
   private drawEye(
@@ -168,154 +257,198 @@ export class FaceCanvasEngine {
     cy: number,
     blink: number,
     emotion: EmotionId,
+    style: Exclude<FaceStyleId, 'auto'>,
+    skinColor: string,
+    eyeColor: string,
+    sc: number,
     isLeft: boolean,
     time: number,
   ): void {
     ctx.save();
 
-    // Winking left eye uses playful curved chevron/happy arc
+    // Playful wink chevron on left eye
     if (emotion === 'wink' && isLeft) {
       ctx.strokeStyle = '#0c0c0c';
-      ctx.lineWidth = 15;
+      ctx.lineWidth = 16 * sc;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.beginPath();
-      ctx.moveTo(cx - 38, cy - 18);
-      ctx.quadraticCurveTo(cx + 8, cy - 2, cx + 36, cy + 4);
-      ctx.quadraticCurveTo(cx + 6, cy + 12, cx - 36, cy + 26);
+      ctx.moveTo(cx - 38 * sc, cy - 18 * sc);
+      ctx.quadraticCurveTo(cx + 8 * sc, cy - 2 * sc, cx + 36 * sc, cy + 4 * sc);
+      ctx.quadraticCurveTo(cx + 6 * sc, cy + 12 * sc, cx - 36 * sc, cy + 26 * sc);
       ctx.stroke();
       ctx.restore();
       return;
     }
 
-    // Happy curved blink arc (exact match to face_blink.png!)
+    // Happy curved blink arc (matches face_blink.png!)
     if (blink > 0.58) {
       const arcBlend = clamp((blink - 0.58) / 0.42, 0, 1);
-      const halfW = lerp(34, 42, arcBlend);
-      const archLift = lerp(10, 26, arcBlend);
+      const halfW = lerp(34, 43, arcBlend) * sc;
+      const archLift = lerp(10, 28, arcBlend) * sc;
       ctx.strokeStyle = '#0c0c0c';
-      ctx.lineWidth = 15;
+      ctx.lineWidth = 16 * sc;
       ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(cx - halfW, cy + 4);
-      ctx.quadraticCurveTo(cx, cy - archLift, cx + halfW, cy + 4);
+      ctx.moveTo(cx - halfW, cy + 5 * sc);
+      ctx.quadraticCurveTo(cx, cy - archLift, cx + halfW, cy + 5 * sc);
       ctx.stroke();
       ctx.restore();
       return;
     }
 
-    // Open / partially blinking dot eye
-    const squashY = lerp(1.0, 0.24, clamp(blink / 0.58, 0, 1));
+    const squashY = lerp(1.0, 0.22, clamp(blink / 0.58, 0, 1));
     const stretchX = lerp(1.0, 1.18, clamp(blink / 0.58, 0, 1));
-
-    let radius = EYE_RADIUS;
-    if (emotion === 'surprised') radius = 38;
-    else if (emotion === 'hype') radius = 38;
-    else if (emotion === 'cry') radius = 37;
 
     ctx.translate(cx, cy);
     ctx.scale(stretchX, squashY);
 
-    // Base bold dark eye dot (authentic Baby Noob style)
-    ctx.fillStyle = '#0c0c0c';
-    ctx.beginPath();
-    ctx.arc(0, 0, radius, 0, Math.PI * 2);
-    ctx.fill();
+    if (style === 'classic_pills' && emotion !== 'hype' && emotion !== 'cry') {
+      // Authentic Roblox Classic/Modern Guest vertical rounded pill eyes!
+      const pillW = (emotion === 'surprised' ? 34 : 28) * sc;
+      const pillH = (emotion === 'surprised' ? 68 : 60) * sc;
+      ctx.fillStyle = eyeColor;
+      ctx.beginPath();
+      ctx.roundRect(-pillW, -pillH, pillW * 2, pillH * 2, pillW);
+      ctx.fill();
 
-    // Emotion-specific eye details
-    if (emotion === 'hype') {
-      // Sparkling golden 4-point star inside eye!
-      const pulse = 0.92 + Math.sin(time * 9.0 + (isLeft ? 0 : 1.1)) * 0.12;
+      if (emotion === 'surprised') {
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(-9 * sc, -22 * sc, 9 * sc, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (style === 'anime_sparkle' && emotion !== 'hype' && emotion !== 'cry') {
+      // Glossy expressive VTuber Anime eyes with iris + dual highlights!
+      const rx = 38 * sc;
+      const ry = (emotion === 'surprised' ? 54 : 48) * sc;
+
+      // Dark outer lash oval
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Colored iris lower crescent
       ctx.save();
-      ctx.scale(pulse, pulse);
-      ctx.rotate(Math.sin(time * 3.5) * 0.1);
-      this.drawFourPointStar(ctx, 0, -2, 23, 8.5, '#ffe766');
-      this.drawFourPointStar(ctx, 0, -2, 13, 5, '#ffffff');
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx - 5 * sc, ry - 5 * sc, 0, 0, Math.PI * 2);
+      ctx.clip();
+      const irisGrad = ctx.createLinearGradient(0, -ry, 0, ry);
+      irisGrad.addColorStop(0, '#0f172a');
+      irisGrad.addColorStop(0.45, eyeColor === '#0c0c0c' || eyeColor === '#111318' ? '#2563eb' : eyeColor);
+      irisGrad.addColorStop(1, '#93c5fd');
+      ctx.fillStyle = irisGrad;
+      ctx.fillRect(-rx, -ry, rx * 2, ry * 2);
+      // Dark pupil
+      ctx.fillStyle = '#0b1020';
+      ctx.beginPath();
+      ctx.ellipse(0, -2 * sc, rx * 0.44, ry * 0.44, 0, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
-    } else if (emotion === 'surprised') {
-      // Crisp bright catchlight
+
+      // Dual anime sparkle catchlights
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
-      ctx.arc(-11, -11, 8.5, 0, Math.PI * 2);
+      ctx.ellipse(-12 * sc, -17 * sc, 11 * sc, 13 * sc, -0.3, 0, Math.PI * 2);
       ctx.fill();
-    } else if (emotion === 'cry') {
-      // Big shimmering teary highlights
-      const wobble = Math.sin(time * 10 + (isLeft ? 0 : 1.5)) * 2.5;
-      ctx.fillStyle = '#e0f7ff';
       ctx.beginPath();
-      ctx.arc(-11, -11 + wobble * 0.3, 11, 0, Math.PI * 2);
+      ctx.arc(13 * sc, 16 * sc, 6.5 * sc, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = '#9be7ff';
-      ctx.beginPath();
-      ctx.arc(11, 12 - wobble * 0.3, 7, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+    } else {
+      // Baby Noob bold iconic circular dot eye (also base for hype/cry)
+      let radius = 32 * sc;
+      if (emotion === 'surprised' || emotion === 'hype' || emotion === 'cry') {
+        radius = 39 * sc;
+      }
 
-      // Animated shimmering tear pool + falling teardrop below eye
+      ctx.fillStyle = emotion === 'hype' || emotion === 'cry' ? '#0c0c0c' : eyeColor;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (emotion === 'hype') {
+        const pulse = 0.92 + Math.sin(time * 9.0 + (isLeft ? 0 : 1.1)) * 0.12;
+        ctx.save();
+        ctx.scale(pulse, pulse);
+        ctx.rotate(Math.sin(time * 3.5) * 0.1);
+        this.drawFourPointStar(ctx, 0, -2 * sc, 24 * sc, 9 * sc, '#ffe766');
+        this.drawFourPointStar(ctx, 0, -2 * sc, 14 * sc, 5.5 * sc, '#ffffff');
+        ctx.restore();
+      } else if (emotion === 'surprised') {
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(-11 * sc, -11 * sc, 9 * sc, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (emotion === 'cry') {
+        const wobble = Math.sin(time * 10 + (isLeft ? 0 : 1.5)) * 2.5 * sc;
+        ctx.fillStyle = '#e0f7ff';
+        ctx.beginPath();
+        ctx.arc(-11 * sc, -11 * sc + wobble * 0.3, 11.5 * sc, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#9be7ff';
+        ctx.beginPath();
+        ctx.arc(11 * sc, 12 * sc - wobble * 0.3, 7.5 * sc, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
+
+    // Post-transform overlays for Cry, Sleepy, Angry (works identically across ALL face styles!)
+    if (emotion === 'cry') {
       ctx.save();
-      const tearGrad = ctx.createLinearGradient(cx, cy + 20, cx, cy + 120);
+      const tearGrad = ctx.createLinearGradient(cx, cy + 20 * sc, cx, cy + 125 * sc);
       tearGrad.addColorStop(0, 'rgba(130, 224, 255, 0.92)');
       tearGrad.addColorStop(1, 'rgba(65, 178, 255, 0.72)');
       ctx.fillStyle = tearGrad;
-
-      // Tear rim at bottom of eye
       ctx.beginPath();
-      ctx.ellipse(cx, cy + 32, 34, 13, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy + 34 * sc, 36 * sc, 14 * sc, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Falling drop cycle
-      const dropT = ((time * 1.15 + (isLeft ? 0 : 0.45)) % 1.0);
-      const dropY = cy + 38 + dropT * 90;
+      const dropT = (time * 1.15 + (isLeft ? 0 : 0.45)) % 1.0;
+      const dropY = cy + 40 * sc + dropT * 92 * sc;
       const dropAlpha = Math.sin(dropT * Math.PI);
-      const dropX = cx + (isLeft ? -14 : 14);
+      const dropX = cx + (isLeft ? -14 : 14) * sc;
       ctx.fillStyle = `rgba(115, 215, 255, ${0.9 * dropAlpha})`;
       ctx.beginPath();
-      ctx.moveTo(dropX, dropY - 18);
-      ctx.quadraticCurveTo(dropX + 14, dropY + 4, dropX, dropY + 14);
-      ctx.quadraticCurveTo(dropX - 14, dropY + 4, dropX, dropY - 18);
+      ctx.moveTo(dropX, dropY - 18 * sc);
+      ctx.quadraticCurveTo(dropX + 14 * sc, dropY + 4 * sc, dropX, dropY + 14 * sc);
+      ctx.quadraticCurveTo(dropX - 14 * sc, dropY + 4 * sc, dropX, dropY - 18 * sc);
       ctx.fill();
       ctx.restore();
-      return;
     } else if (emotion === 'sleepy') {
-      // Half-closed yellow eyelid covering upper 55% of eye + soft lid line
-      ctx.restore();
       ctx.save();
-      const droop = Math.sin(time * 2.2) * 3;
-      ctx.fillStyle = BABY_NOOB_YELLOW_HEX;
-      ctx.fillRect(cx - 46, cy - 48, 92, 46 + droop);
+      const droop = Math.sin(time * 2.2) * 3 * sc;
+      ctx.fillStyle = skinColor;
+      ctx.fillRect(cx - 52 * sc, cy - 72 * sc, 104 * sc, 72 * sc + droop);
       ctx.strokeStyle = '#0c0c0c';
-      ctx.lineWidth = 11;
+      ctx.lineWidth = 12 * sc;
       ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(cx - 38, cy - 2 + droop);
-      ctx.quadraticCurveTo(cx, cy + 6 + droop, cx + 38, cy - 2 + droop);
+      ctx.moveTo(cx - 40 * sc, cy + droop);
+      ctx.quadraticCurveTo(cx, cy + 8 * sc + droop, cx + 40 * sc, cy + droop);
       ctx.stroke();
       ctx.restore();
-      return;
     } else if (emotion === 'angry') {
-      // Slightly flattened top via angled brow cut
-      ctx.restore();
       ctx.save();
-      ctx.fillStyle = BABY_NOOB_YELLOW_HEX;
+      ctx.fillStyle = skinColor;
       ctx.beginPath();
       if (isLeft) {
-        ctx.moveTo(cx - 45, cy - 44);
-        ctx.lineTo(cx + 45, cy - 20);
-        ctx.lineTo(cx + 45, cy - 58);
-        ctx.lineTo(cx - 45, cy - 58);
+        ctx.moveTo(cx - 50 * sc, cy - 52 * sc);
+        ctx.lineTo(cx + 50 * sc, cy - 18 * sc);
+        ctx.lineTo(cx + 50 * sc, cy - 78 * sc);
+        ctx.lineTo(cx - 50 * sc, cy - 78 * sc);
       } else {
-        ctx.moveTo(cx - 45, cy - 20);
-        ctx.lineTo(cx + 45, cy - 44);
-        ctx.lineTo(cx + 45, cy - 58);
-        ctx.lineTo(cx - 45, cy - 58);
+        ctx.moveTo(cx - 50 * sc, cy - 18 * sc);
+        ctx.lineTo(cx + 50 * sc, cy - 52 * sc);
+        ctx.lineTo(cx + 50 * sc, cy - 78 * sc);
+        ctx.lineTo(cx - 50 * sc, cy - 78 * sc);
       }
       ctx.closePath();
       ctx.fill();
       ctx.restore();
-      return;
     }
-
-    ctx.restore();
   }
 
   private drawFourPointStar(
@@ -342,59 +475,73 @@ export class FaceCanvasEngine {
 
   private drawEyebrows(
     ctx: CanvasRenderingContext2D,
+    layout: FaceLayout,
     state: FaceRenderState,
+    style: Exclude<FaceStyleId, 'auto'>,
     ox: number,
     oy: number,
   ): void {
+    const sc = layout.scale;
     const showAngry = state.emotion === 'angry' || state.browDown > 0.45;
     const showSurprised = state.emotion === 'surprised' || state.browUp > 0.45;
     const showCry = state.emotion === 'cry';
+    const showAnimeBrows = style === 'anime_sparkle' && !showAngry && !showSurprised && !showCry;
 
-    if (!showAngry && !showSurprised && !showCry) return;
+    if (!showAngry && !showSurprised && !showCry && !showAnimeBrows) return;
 
     ctx.save();
     ctx.strokeStyle = '#0c0c0c';
-    ctx.lineWidth = 14;
+    ctx.lineWidth = (showAnimeBrows ? 9 : 14) * sc;
     ctx.lineCap = 'round';
 
-    const lx = LEFT_EYE_X + ox;
-    const rx = RIGHT_EYE_X + ox;
-    const by = EYE_Y - 58 + oy;
+    const lx = layout.leftEyeX + ox;
+    const rx = layout.rightEyeX + ox;
+    const by = layout.eyeY - (style === 'classic_pills' ? 76 : 62) * sc + oy;
 
     if (showAngry) {
       const strength = state.emotion === 'angry' ? 1.0 : clamp((state.browDown - 0.35) / 0.65, 0, 1);
-      const tilt = 22 * strength;
-      // Left brow angled down-right
+      const tilt = 22 * sc * strength;
       ctx.beginPath();
-      ctx.moveTo(lx - 40, by - tilt * 0.5 + 16);
-      ctx.lineTo(lx + 40, by + tilt + 16);
+      ctx.moveTo(lx - 42 * sc, by - tilt * 0.5 + 18 * sc);
+      ctx.lineTo(lx + 42 * sc, by + tilt + 18 * sc);
       ctx.stroke();
-      // Right brow angled down-left
+
       ctx.beginPath();
-      ctx.moveTo(rx - 40, by + tilt + 16);
-      ctx.lineTo(rx + 40, by - tilt * 0.5 + 16);
+      ctx.moveTo(rx - 42 * sc, by + tilt + 18 * sc);
+      ctx.lineTo(rx + 42 * sc, by - tilt * 0.5 + 18 * sc);
       ctx.stroke();
     } else if (showCry) {
-      // Worried upward-inner brows
-      ctx.lineWidth = 12;
+      ctx.lineWidth = 12 * sc;
       ctx.beginPath();
-      ctx.moveTo(lx - 38, by + 12);
-      ctx.quadraticCurveTo(lx + 4, by + 4, lx + 34, by - 12);
+      ctx.moveTo(lx - 38 * sc, by + 12 * sc);
+      ctx.quadraticCurveTo(lx + 4 * sc, by + 4 * sc, lx + 34 * sc, by - 12 * sc);
       ctx.stroke();
+
       ctx.beginPath();
-      ctx.moveTo(rx + 38, by + 12);
-      ctx.quadraticCurveTo(rx - 4, by + 4, rx - 34, by - 12);
+      ctx.moveTo(rx + 38 * sc, by + 12 * sc);
+      ctx.quadraticCurveTo(rx - 4 * sc, by + 4 * sc, rx - 34 * sc, by - 12 * sc);
       ctx.stroke();
     } else if (showSurprised) {
-      const lift = (state.emotion === 'surprised' ? 1 : state.browUp) * 18;
-      ctx.lineWidth = 12;
+      const lift = (state.emotion === 'surprised' ? 1 : state.browUp) * 18 * sc;
+      ctx.lineWidth = 12 * sc;
       ctx.beginPath();
-      ctx.moveTo(lx - 34, by - lift);
-      ctx.quadraticCurveTo(lx, by - 22 - lift, lx + 34, by - lift);
+      ctx.moveTo(lx - 34 * sc, by - lift);
+      ctx.quadraticCurveTo(lx, by - 22 * sc - lift, lx + 34 * sc, by - lift);
       ctx.stroke();
+
       ctx.beginPath();
-      ctx.moveTo(rx - 34, by - lift);
-      ctx.quadraticCurveTo(rx, by - 22 - lift, rx + 34, by - lift);
+      ctx.moveTo(rx - 34 * sc, by - lift);
+      ctx.quadraticCurveTo(rx, by - 22 * sc - lift, rx + 34 * sc, by - lift);
+      ctx.stroke();
+    } else if (showAnimeBrows) {
+      ctx.beginPath();
+      ctx.moveTo(lx - 30 * sc, by - 4 * sc);
+      ctx.quadraticCurveTo(lx, by - 16 * sc, lx + 30 * sc, by - 4 * sc);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(rx - 30 * sc, by - 4 * sc);
+      ctx.quadraticCurveTo(rx, by - 16 * sc, rx + 30 * sc, by - 4 * sc);
       ctx.stroke();
     }
 
@@ -403,67 +550,75 @@ export class FaceCanvasEngine {
 
   private drawMouth(
     ctx: CanvasRenderingContext2D,
+    layout: FaceLayout,
     state: FaceRenderState,
+    style: Exclude<FaceStyleId, 'auto'>,
     ox: number,
     oy: number,
   ): void {
-    const mx = MOUTH_X + ox;
-    const my = MOUTH_BASE_Y + oy;
+    const sc = layout.scale;
+    const mx = layout.mouthX + ox;
+    const my = layout.mouthBaseY + oy;
     const open = clamp(state.mouthOpen, 0, 1);
     const round = clamp(state.mouthRound, 0, 1);
+    const tongueColor = state.mouthColor;
+    const cavityColor = darkenHex(state.mouthColor, 0.78);
 
     ctx.save();
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
 
-    // Special emotion resting mouths when NOT actively lip-syncing loudly
+    // Special emotion resting mouths when not talking loudly
     if (!state.isLipSyncActive || open < 0.08) {
       if (state.emotion === 'blush' && open < 0.15) {
-        // Cute kawaii ':3' cat smile!
         ctx.strokeStyle = '#0c0c0c';
-        ctx.lineWidth = 14;
+        ctx.lineWidth = 15 * sc;
         ctx.beginPath();
-        ctx.moveTo(mx - 62, my + 30);
-        ctx.quadraticCurveTo(mx - 31, my + 66, mx, my + 34);
-        ctx.quadraticCurveTo(mx + 31, my + 66, mx + 62, my + 30);
+        ctx.moveTo(mx - 64 * sc, my + 32 * sc);
+        ctx.quadraticCurveTo(mx - 32 * sc, my + 68 * sc, mx, my + 36 * sc);
+        ctx.quadraticCurveTo(mx + 32 * sc, my + 68 * sc, mx + 64 * sc, my + 32 * sc);
         ctx.stroke();
         ctx.restore();
         return;
       }
 
       if (state.emotion === 'angry' && open < 0.16) {
-        // Cute grumpy pout curve
         ctx.strokeStyle = '#0c0c0c';
-        ctx.lineWidth = 15;
+        ctx.lineWidth = 16 * sc;
         ctx.beginPath();
-        ctx.moveTo(mx - 68, my + 68);
-        ctx.quadraticCurveTo(mx, my + 24, mx + 68, my + 68);
+        ctx.moveTo(mx - 70 * sc, my + 72 * sc);
+        ctx.quadraticCurveTo(mx, my + 24 * sc, mx + 70 * sc, my + 72 * sc);
         ctx.stroke();
         ctx.restore();
         return;
       }
 
       if (state.emotion === 'cry' && open < 0.16) {
-        // Wobbling sad mouth
-        const wob = Math.sin(state.time * 12) * 5;
+        const wob = Math.sin(state.time * 12) * 5 * sc;
         ctx.strokeStyle = '#0c0c0c';
-        ctx.lineWidth = 14;
+        ctx.lineWidth = 15 * sc;
         ctx.beginPath();
-        ctx.moveTo(mx - 68, my + 72);
-        ctx.bezierCurveTo(mx - 26, my + 26 + wob, mx + 26, my + 26 - wob, mx + 68, my + 72);
+        ctx.moveTo(mx - 70 * sc, my + 74 * sc);
+        ctx.bezierCurveTo(
+          mx - 26 * sc,
+          my + 26 * sc + wob,
+          mx + 26 * sc,
+          my + 26 * sc - wob,
+          mx + 70 * sc,
+          my + 74 * sc,
+        );
         ctx.stroke();
         ctx.restore();
         return;
       }
 
       if (state.emotion === 'sleepy' && open < 0.15) {
-        // Small peaceful cozy 'o' / gentle smile
-        const breathe = Math.sin(state.time * 2.2) * 5;
-        ctx.fillStyle = '#d8244e';
+        const breathe = Math.sin(state.time * 2.2) * 5 * sc;
+        ctx.fillStyle = tongueColor;
         ctx.strokeStyle = '#0c0c0c';
-        ctx.lineWidth = 13;
+        ctx.lineWidth = 14 * sc;
         ctx.beginPath();
-        ctx.ellipse(mx, my + 56, 26 + breathe * 0.4, 22 + breathe, 0, 0, Math.PI * 2);
+        ctx.ellipse(mx, my + 58 * sc, (26 + breathe * 0.4) * sc, (22 + breathe) * sc, 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
         ctx.restore();
@@ -471,67 +626,77 @@ export class FaceCanvasEngine {
       }
 
       if (state.emotion === 'surprised' && open < 0.25) {
-        // Expressive surprised 'O' mouth!
-        this.drawRoundOMouth(ctx, mx, my + 62, 48, 60);
+        this.drawRoundOMouth(ctx, mx, my + 64 * sc, 48 * sc, 60 * sc, cavityColor, tongueColor, sc);
+        ctx.restore();
+        return;
+      }
+
+      // Authentic Classic / Modern Guest resting curved Roblox smile when idle!
+      if (style === 'classic_pills' && (state.emotion === 'happy' || state.emotion === 'wink') && open < 0.08) {
+        const halfW = (state.characterId === 'modern_guest' ? 124 : 138) * sc;
+        const depth = (state.characterId === 'modern_guest' ? 105 : 96) * sc;
+        ctx.strokeStyle = '#111318';
+        ctx.lineWidth = 28 * sc;
+        ctx.beginPath();
+        ctx.moveTo(mx - halfW, my + 24 * sc);
+        ctx.quadraticCurveTo(mx, my + 24 * sc + depth, mx + halfW, my + 24 * sc);
+        ctx.stroke();
         ctx.restore();
         return;
       }
     }
 
-    // Determine effective openness:
-    // - When live lip-sync (Mic / Webcam / Demo speech) is active: follows real voice/jawOpen directly!
-    // - When idle in 'happy' / 'hype' / 'wink': shows Baby Noob's authentic iconic joyful D-smile from face_open.png!
     let effOpen = open;
     if (!state.isLipSyncActive) {
       if (state.emotion === 'happy' || state.emotion === 'wink') {
-        effOpen = 0.86; // Authentic face_open.png proportion!
+        effOpen = style === 'classic_pills' ? 0.0 : 0.86;
       } else if (state.emotion === 'hype') {
         effOpen = 1.0;
       }
     }
 
-    // Closed happy smile when silent during active lip-sync
+    // Closed happy smile during silence when lip-sync active
     if (effOpen < 0.08) {
-      const smileLift = state.emotion === 'angry' || state.emotion === 'cry' ? -18 : 26;
-      const halfW = lerp(74, 96, clamp((state.mouthSmile + 1) * 0.5, 0, 1));
+      const smileLift = (state.emotion === 'angry' || state.emotion === 'cry' ? -18 : style === 'classic_pills' ? 76 : 30) * sc;
+      const halfW = lerp(74, style === 'classic_pills' ? 124 : 96, clamp((state.mouthSmile + 1) * 0.5, 0, 1)) * sc;
       ctx.strokeStyle = '#0c0c0c';
-      ctx.lineWidth = 15;
+      ctx.lineWidth = (style === 'classic_pills' ? 24 : 15) * sc;
       ctx.beginPath();
-      ctx.moveTo(mx - halfW, my + 38);
-      ctx.quadraticCurveTo(mx, my + 38 + smileLift, mx + halfW, my + 38);
+      ctx.moveTo(mx - halfW, my + 34 * sc);
+      ctx.quadraticCurveTo(mx, my + 34 * sc + smileLift, mx + halfW, my + 34 * sc);
       ctx.stroke();
       ctx.restore();
       return;
     }
 
-    // Rounded vowel ('O' / 'U') when mouthRound is strong (formant or pucker or surprised talking)
+    // Rounded vowel ('O' / 'U')
     if (round > 0.55 || (state.emotion === 'surprised' && effOpen > 0.2)) {
       const rMix = state.emotion === 'surprised' ? 0.85 : round;
-      const rx = lerp(42, 62, effOpen) * lerp(1.15, 0.82, rMix);
-      const ry = lerp(30, 74, effOpen);
-      this.drawRoundOMouth(ctx, mx, my + 56, rx, ry);
+      const rx = lerp(42, 62, effOpen) * lerp(1.15, 0.82, rMix) * sc;
+      const ry = lerp(30, 74, effOpen) * sc;
+      this.drawRoundOMouth(ctx, mx, my + 56 * sc, rx, ry, cavityColor, tongueColor, sc);
       ctx.restore();
       return;
     }
 
-    // Authentic Baby Noob D-Smile / Talking Mouth (matching face_open.png exact dimensions & 2-tone fill!)
-    // In face_open.png: width=226 (halfW=113), top y=623..646, bottom y=791 (height ~160)
+    // Expressive D-Smile / Talking Mouth (2-tone crimson + bright tongue + thick black outline)
     const smileFactor =
       state.emotion === 'angry' || state.emotion === 'cry'
         ? -0.35
         : clamp(state.mouthSmile, -0.4, 1);
 
-    const halfW = lerp(74, 114, clamp(effOpen * 0.75 + 0.25, 0, 1)) * lerp(0.84, 1.05, (smileFactor + 1) * 0.5);
-    const topEdgeY = my + lerp(24, -4, effOpen);
-    const topDip = lerp(10, 22, effOpen) * (smileFactor >= 0 ? 1 : -0.6);
-    const bottomY = topEdgeY + lerp(44, 166, effOpen);
+    const halfW =
+      lerp(74, 114, clamp(effOpen * 0.75 + 0.25, 0, 1)) *
+      lerp(0.84, 1.05, (smileFactor + 1) * 0.5) *
+      sc;
+    const topEdgeY = my + lerp(24, -4, effOpen) * sc;
+    const topDip = lerp(10, 22, effOpen) * (smileFactor >= 0 ? 1 : -0.6) * sc;
+    const bottomY = topEdgeY + lerp(44, 166, effOpen) * sc;
 
     const traceMouthPath = () => {
       ctx.beginPath();
-      // Top lip slight dip (matching face_open.png!)
       ctx.moveTo(mx - halfW, topEdgeY);
       ctx.quadraticCurveTo(mx, topEdgeY + topDip, mx + halfW, topEdgeY);
-      // Right cheek down into full rounded U bottom
       ctx.bezierCurveTo(
         mx + halfW * 1.02,
         lerp(topEdgeY, bottomY, 0.62),
@@ -540,7 +705,6 @@ export class FaceCanvasEngine {
         mx,
         bottomY,
       );
-      // Left cheek back up to left corner
       ctx.bezierCurveTo(
         mx - halfW * 0.54,
         bottomY,
@@ -552,25 +716,30 @@ export class FaceCanvasEngine {
       ctx.closePath();
     };
 
-    // Clip interior for authentic two-tone shading (#b0163a upper cavity + #d8244e bright tongue!)
     ctx.save();
     traceMouthPath();
-    ctx.fillStyle = '#b0163a';
+    ctx.fillStyle = cavityColor;
     ctx.fill();
     ctx.clip();
 
-    // Bright pink-red lower tongue dome matching face_open.png
-    const tongueTopY = lerp(topEdgeY + topDip + 8, bottomY, 0.28);
-    ctx.fillStyle = '#d8244e';
+    const tongueTopY = lerp(topEdgeY + topDip + 8 * sc, bottomY, 0.28);
+    ctx.fillStyle = tongueColor;
     ctx.beginPath();
-    ctx.ellipse(mx, bottomY + 14, halfW * 1.08, Math.max(24, bottomY - tongueTopY + 18), 0, 0, Math.PI * 2);
+    ctx.ellipse(
+      mx,
+      bottomY + 14 * sc,
+      halfW * 1.08,
+      Math.max(24 * sc, bottomY - tongueTopY + 18 * sc),
+      0,
+      0,
+      Math.PI * 2,
+    );
     ctx.fill();
     ctx.restore();
 
-    // Bold iconic dark outline matching face_open.png
     traceMouthPath();
     ctx.strokeStyle = '#0c0c0c';
-    ctx.lineWidth = 16;
+    ctx.lineWidth = 16 * sc;
     ctx.stroke();
 
     ctx.restore();
@@ -582,15 +751,18 @@ export class FaceCanvasEngine {
     cy: number,
     rx: number,
     ry: number,
+    cavityColor: string,
+    tongueColor: string,
+    sc: number,
   ): void {
     ctx.save();
     ctx.beginPath();
     ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-    ctx.fillStyle = '#b0163a';
+    ctx.fillStyle = cavityColor;
     ctx.fill();
     ctx.clip();
 
-    ctx.fillStyle = '#d8244e';
+    ctx.fillStyle = tongueColor;
     ctx.beginPath();
     ctx.ellipse(cx, cy + ry * 0.52, rx * 0.95, ry * 0.72, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -599,7 +771,7 @@ export class FaceCanvasEngine {
     ctx.beginPath();
     ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
     ctx.strokeStyle = '#0c0c0c';
-    ctx.lineWidth = 15;
+    ctx.lineWidth = 15 * sc;
     ctx.stroke();
   }
 

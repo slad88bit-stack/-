@@ -2,14 +2,20 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Eye, Loader2, Sparkles } from 'lucide-react';
 import {
   BACKGROUNDS,
+  CHARACTERS,
+  CUSTOM_PRESETS,
   DEFAULT_ACCESSORIES,
   DEFAULT_TRACKING_SETTINGS,
   EMOTIONS,
+  getCharacterMeta,
   type AccessoriesState,
   type AnimationId,
   type BackgroundId,
   type CameraPresetId,
+  type CharacterCustomization,
+  type CharacterId,
   type EmotionId,
+  type FaceStyleId,
   type LightingPresetId,
   type MicStatus,
   type TelemetrySnapshot,
@@ -20,6 +26,8 @@ import { VTuberStage } from './vtuber/VTuberStage';
 import { TopBar } from './components/TopBar';
 import { BottomDock } from './components/BottomDock';
 import { StudioDrawer, type DrawerTab } from './components/StudioDrawer';
+
+const STORAGE_KEY = 'baby_vtuber_custom_v2';
 
 const INITIAL_TELEMETRY: TelemetrySnapshot = {
   yawDeg: 0,
@@ -35,20 +43,73 @@ const INITIAL_TELEMETRY: TelemetrySnapshot = {
   spectrum: new Array<number>(16).fill(0),
 };
 
+interface SavedRosterState {
+  customByChar: Record<CharacterId, CharacterCustomization>;
+  accByChar: Record<CharacterId, AccessoriesState>;
+}
+
+function createDefaultRosterState(): SavedRosterState {
+  return {
+    customByChar: {
+      noob: { ...getCharacterMeta('noob').defaultCustomization },
+      guest: { ...getCharacterMeta('guest').defaultCustomization },
+      modern_guest: { ...getCharacterMeta('modern_guest').defaultCustomization },
+    },
+    accByChar: {
+      noob: { ...DEFAULT_ACCESSORIES },
+      guest: { ...DEFAULT_ACCESSORIES },
+      modern_guest: { ...DEFAULT_ACCESSORIES },
+    },
+  };
+}
+
+function loadSavedRosterState(): SavedRosterState {
+  const base = createDefaultRosterState();
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return base;
+    const parsed = JSON.parse(raw) as Partial<SavedRosterState>;
+    for (const ch of CHARACTERS) {
+      if (parsed.customByChar?.[ch.id]) {
+        base.customByChar[ch.id] = {
+          ...base.customByChar[ch.id],
+          ...parsed.customByChar[ch.id],
+        };
+      }
+      if (parsed.accByChar?.[ch.id]) {
+        base.accByChar[ch.id] = {
+          ...base.accByChar[ch.id],
+          ...parsed.accByChar[ch.id],
+        };
+      }
+    }
+  } catch {
+    // Ignore storage read errors
+  }
+  return base;
+}
+
+function pickRandom<T>(arr: readonly T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
 export const App: React.FC = () => {
   const stageContainerRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<VTuberStage | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
   const [loading, setLoading] = useState(true);
+  const [switchingChar, setSwitchingChar] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [characterId, setCharacterId] = useState<CharacterId>('noob');
+  const [rosterState, setRosterState] = useState<SavedRosterState>(() => loadSavedRosterState());
 
   const [emotion, setEmotion] = useState<EmotionId>('happy');
   const [animationMode, setAnimationMode] = useState<AnimationId>('live');
   const [background, setBackground] = useState<BackgroundId>('studio');
   const [cameraPreset, setCameraPreset] = useState<CameraPresetId>('portrait');
   const [lighting, setLighting] = useState<LightingPresetId>('daylight');
-  const [accessories, setAccessories] = useState<AccessoriesState>(DEFAULT_ACCESSORIES);
   const [settings, setSettings] = useState<TrackingSettings>(DEFAULT_TRACKING_SETTINGS);
 
   const [webcamStatus, setWebcamStatus] = useState<WebcamStatus>('idle');
@@ -59,10 +120,14 @@ export const App: React.FC = () => {
   const [demoSpeech, setDemoSpeech] = useState(false);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<DrawerTab>('tracking');
+  const [drawerTab, setDrawerTab] = useState<DrawerTab>('customizer');
   const [obsMode, setObsMode] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<TelemetrySnapshot>(INITIAL_TELEMETRY);
+
+  const activeMeta = useMemo(() => getCharacterMeta(characterId), [characterId]);
+  const activeCustom = rosterState.customByChar[characterId];
+  const activeAccessories = rosterState.accByChar[characterId];
 
   const darkUi = useMemo(() => {
     return Boolean(BACKGROUNDS.find((b) => b.id === background)?.isDarkUi);
@@ -78,20 +143,37 @@ export const App: React.FC = () => {
     }, durationMs);
   }, []);
 
+  // Persist per-character customizations automatically
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(rosterState));
+    } catch {
+      // Ignore quota errors
+    }
+  }, [rosterState]);
+
   // Initialize Three.js VTuber Stage once
   useEffect(() => {
     const container = stageContainerRef.current;
     if (!container) return;
 
-    const stage = new VTuberStage(container, {
-      onLoaded: () => setLoading(false),
-      onError: (msg) => {
-        setLoading(false);
-        setLoadError(msg);
+    const initial = loadSavedRosterState();
+    const stage = new VTuberStage(
+      container,
+      'noob',
+      initial.customByChar.noob,
+      initial.accByChar.noob,
+      {
+        onLoaded: () => setLoading(false),
+        onCharacterSwitching: (sw) => setSwitchingChar(sw),
+        onError: (msg) => {
+          setLoading(false);
+          setLoadError(msg);
+        },
+        onAnimationChange: (anim) => setAnimationMode(anim),
+        onTelemetry: (snap) => setTelemetry(snap),
       },
-      onAnimationChange: (anim) => setAnimationMode(anim),
-      onTelemetry: (snap) => setTelemetry(snap),
-    });
+    );
     stageRef.current = stage;
 
     return () => {
@@ -100,7 +182,19 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // Sync UI state -> VTuberStage
+  // Sync character + active customizer & accessories to Three.js stage
+  useEffect(() => {
+    stageRef.current?.setCharacter(characterId, activeCustom, activeAccessories);
+  }, [characterId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    stageRef.current?.setCustomization(activeCustom);
+  }, [activeCustom]);
+
+  useEffect(() => {
+    stageRef.current?.setAccessories(activeAccessories);
+  }, [activeAccessories]);
+
   useEffect(() => {
     stageRef.current?.setEmotion(emotion);
   }, [emotion]);
@@ -118,10 +212,6 @@ export const App: React.FC = () => {
   }, [lighting]);
 
   useEffect(() => {
-    stageRef.current?.setAccessories(accessories);
-  }, [accessories]);
-
-  useEffect(() => {
     stageRef.current?.setSettings(settings);
   }, [settings]);
 
@@ -133,18 +223,25 @@ export const App: React.FC = () => {
     stageRef.current?.setMouseTracking(mouseTracking);
   }, [mouseTracking]);
 
-  // Global keyboard shortcuts (1-8 emotions, H OBS mode, Escape restore, Space headpat)
+  // Global keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       const key = e.key.toLowerCase();
 
       if (key >= '1' && key <= '8') {
-        const idx = parseInt(key, 10) - 1;
-        const em = EMOTIONS[idx];
-        if (em) {
-          setEmotion(em.id);
-        }
+        const em = EMOTIONS[parseInt(key, 10) - 1];
+        if (em) setEmotion(em.id);
+        return;
+      }
+
+      if (key === 'c' || key === 'с') {
+        setObsMode(false);
+        setDrawerOpen((open) => {
+          if (open && drawerTab === 'customizer') return false;
+          setDrawerTab('customizer');
+          return true;
+        });
         return;
       }
 
@@ -172,7 +269,135 @@ export const App: React.FC = () => {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [showToast]);
+  }, [drawerTab, showToast]);
+
+  const handleSelectCharacter = useCallback(
+    (id: CharacterId) => {
+      if (id === characterId) return;
+      setCharacterId(id);
+      setAnimationMode('live');
+      const meta = getCharacterMeta(id);
+      showToast(`Персонаж: ${meta.name} (${meta.animations.length - 1} анимаций)`);
+    },
+    [characterId, showToast],
+  );
+
+  const handleUpdateCustomization = useCallback(
+    (patch: Partial<CharacterCustomization>) => {
+      setRosterState((prev) => ({
+        ...prev,
+        customByChar: {
+          ...prev.customByChar,
+          [characterId]: {
+            ...prev.customByChar[characterId],
+            ...patch,
+          },
+        },
+      }));
+    },
+    [characterId],
+  );
+
+  const handleUpdateAccessories = useCallback(
+    (patch: Partial<AccessoriesState>) => {
+      setRosterState((prev) => ({
+        ...prev,
+        accByChar: {
+          ...prev.accByChar,
+          [characterId]: {
+            ...prev.accByChar[characterId],
+            ...patch,
+          },
+        },
+      }));
+    },
+    [characterId],
+  );
+
+  const handleApplyPreset = useCallback(
+    (presetId: string) => {
+      const preset = CUSTOM_PRESETS.find((p) => p.id === presetId);
+      if (!preset) return;
+      const meta = getCharacterMeta(characterId);
+      const res = preset.apply(meta);
+      setRosterState((prev) => ({
+        customByChar: {
+          ...prev.customByChar,
+          [characterId]: {
+            ...prev.customByChar[characterId],
+            ...res.custom,
+          },
+        },
+        accByChar: res.accessories
+          ? {
+              ...prev.accByChar,
+              [characterId]: {
+                ...prev.accByChar[characterId],
+                ...res.accessories,
+              },
+            }
+          : prev.accByChar,
+      }));
+      showToast(`Применён скин: ${preset.emoji} ${preset.label}`);
+    },
+    [characterId, showToast],
+  );
+
+  const handleRandomizeSkin = useCallback(() => {
+    const meta = getCharacterMeta(characterId);
+    const skins = ['#edc114', '#eef0f4', '#cfd3da', '#fde68a', '#ffd5b8', '#fbcfe8', '#bae6fd'];
+    const outfits = ['#0648a6', '#14151a', '#7c3aed', '#dc2626', '#059669', '#ec4899', '#0f766e', '#ea580c', '#1e293b'];
+    const accents = ['#cd1515', '#38bdf8', '#f59e0b', '#ec4899', '#a855f7', '#22c55e', '#facc15', '#fb7185'];
+    const eyes = ['#0c0c0c', '#1d4ed8', '#7c3aed', '#be123c', '#047857'];
+    const faceStyles: FaceStyleId[] = ['auto', 'kawaii_dots', 'classic_pills', 'anime_sparkle'];
+
+    const skin = pickRandom(skins);
+    const outfit = pickRandom(outfits);
+    const accent = pickRandom(accents);
+    const legs = pickRandom(outfits);
+
+    const nextCustom: CharacterCustomization = {
+      skinColor: skin,
+      torsoColor: outfit,
+      armsColor: characterId === 'noob' ? skin : pickRandom([outfit, accent, '#14151a']),
+      legsColor: legs,
+      capVisible: meta.hasCap ? Math.random() > 0.25 : false,
+      capDomeColor: outfit,
+      capAccentColor: accent,
+      shoeColor: accent,
+      faceStyle: pickRandom(faceStyles),
+      eyeColor: pickRandom(eyes),
+      mouthColor: pickRandom(['#d8244e', '#ec4899', '#f97316', '#e11d48']),
+      showPrint: Math.random() > 0.2,
+      accessoryAccentColor: accent,
+    };
+
+    const nextAcc: AccessoriesState = {
+      headphones: Math.random() < 0.35,
+      crown: Math.random() < 0.25,
+      sunglasses: Math.random() < 0.3,
+      halo: Math.random() < 0.2,
+      catEars: Math.random() < 0.35,
+      bowtie: Math.random() < 0.3,
+      wings: Math.random() < 0.25,
+      blushAlways: Math.random() < 0.4,
+    };
+
+    setRosterState((prev) => ({
+      customByChar: { ...prev.customByChar, [characterId]: nextCustom },
+      accByChar: { ...prev.accByChar, [characterId]: nextAcc },
+    }));
+    showToast(`🎲 Случайная кастомка для ${meta.name}!`);
+  }, [characterId, showToast]);
+
+  const handleResetCustomization = useCallback(() => {
+    const meta = getCharacterMeta(characterId);
+    setRosterState((prev) => ({
+      customByChar: { ...prev.customByChar, [characterId]: { ...meta.defaultCustomization } },
+      accByChar: { ...prev.accByChar, [characterId]: { ...DEFAULT_ACCESSORIES } },
+    }));
+    showToast(`Сброшено к оригиналу: ${meta.name}`);
+  }, [characterId, showToast]);
 
   const handleToggleWebcam = useCallback(async () => {
     const stage = stageRef.current;
@@ -225,7 +450,7 @@ export const App: React.FC = () => {
       await stage.audio.start();
       setMicStatus('active');
       setDemoSpeech(false);
-      showToast('Микрофон активен — говори, Baby Noob повторяет губами!');
+      showToast('Микрофон активен — говори, персонаж повторяет губами!');
     } catch (err) {
       const msg =
         err instanceof Error
@@ -276,10 +501,10 @@ export const App: React.FC = () => {
     const pngUrl = stage.captureTransparentPNG();
     const link = document.createElement('a');
     link.href = pngUrl;
-    link.download = `baby-noob-vtuber-${emotion}.png`;
+    link.download = `${characterId}-vtuber-${emotion}.png`;
     link.click();
     showToast('Прозрачный PNG-стикер сохранён!');
-  }, [emotion, showToast]);
+  }, [characterId, emotion, showToast]);
 
   const handleAttachPreviewCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
     stageRef.current?.webcam.setPreviewCanvas(canvas);
@@ -294,9 +519,14 @@ export const App: React.FC = () => {
     setSettings((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  const handleUpdateAccessories = useCallback((patch: Partial<AccessoriesState>) => {
-    setAccessories((prev) => ({ ...prev, ...patch }));
-  }, []);
+  const handleOpenCustomizer = useCallback(() => {
+    if (drawerOpen && drawerTab === 'customizer') {
+      setDrawerOpen(false);
+    } else {
+      setDrawerTab('customizer');
+      setDrawerOpen(true);
+    }
+  }, [drawerOpen, drawerTab]);
 
   return (
     <main className="relative h-screen w-screen overflow-hidden">
@@ -306,16 +536,16 @@ export const App: React.FC = () => {
         className="h-full w-full cursor-grab active:cursor-grabbing"
       />
 
-      {/* Loading Overlay */}
+      {/* Initial Loading Overlay */}
       {loading && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#f4f1ea]/95 backdrop-blur-md">
           <div className="flex flex-col items-center gap-3 rounded-3xl bg-white/85 px-8 py-6 shadow-xl">
             <Loader2 className="h-9 w-9 animate-spin text-[#0648a6]" />
             <div className="font-display text-lg font-bold text-slate-900">
-              Загружаем Baby Noob VTuber…
+              Загружаем VTuber Studio…
             </div>
             <p className="text-xs text-slate-500">
-              Подготавливаем скелет BabyNoob_Rig, 5 анимаций и живую мимику
+              Подготавливаем 3 персонажей (Noob, Guest, Modern Guest), кастомку и живую мимику
             </p>
           </div>
         </div>
@@ -331,17 +561,21 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Main Studio UI (hidden cleanly in OBS mode) */}
+      {/* Main Studio UI */}
       {!obsMode && !loading && !loadError && (
         <>
           <TopBar
+            characterId={characterId}
+            switchingChar={switchingChar}
             webcamStatus={webcamStatus}
             micStatus={micStatus}
             mouseTracking={mouseTracking}
             demoSpeech={demoSpeech}
             drawerOpen={drawerOpen}
+            isCustomizerActive={drawerOpen && drawerTab === 'customizer'}
             darkUi={darkUi}
             telemetry={telemetry}
+            onSelectCharacter={handleSelectCharacter}
             onToggleWebcam={() => void handleToggleWebcam()}
             onToggleMic={() => void handleToggleMic()}
             onToggleMouse={handleToggleMouse}
@@ -352,13 +586,24 @@ export const App: React.FC = () => {
               setObsMode(true);
               showToast('OBS режим активен · нажми H или Esc, чтобы вернуть интерфейс', 3000);
             }}
-            onToggleDrawer={() => setDrawerOpen((v) => !v)}
+            onOpenCustomizer={handleOpenCustomizer}
+            onToggleDrawer={() => {
+              if (drawerOpen) {
+                setDrawerOpen(false);
+              } else {
+                setDrawerTab('tracking');
+                setDrawerOpen(true);
+              }
+            }}
           />
 
           <StudioDrawer
             open={drawerOpen}
             tab={drawerTab}
             darkUi={darkUi}
+            characterId={characterId}
+            customization={activeCustom}
+            accessories={activeAccessories}
             webcamStatus={webcamStatus}
             webcamError={webcamError}
             micError={micError}
@@ -367,9 +612,14 @@ export const App: React.FC = () => {
             background={background}
             cameraPreset={cameraPreset}
             lighting={lighting}
-            accessories={accessories}
             onChangeTab={setDrawerTab}
             onClose={() => setDrawerOpen(false)}
+            onSelectCharacter={handleSelectCharacter}
+            onUpdateCustomization={handleUpdateCustomization}
+            onApplyPreset={handleApplyPreset}
+            onRandomizeSkin={handleRandomizeSkin}
+            onResetCustomization={handleResetCustomization}
+            onUpdateAccessories={handleUpdateAccessories}
             onAttachPreviewCanvas={handleAttachPreviewCanvas}
             onCalibrateWebcam={handleCalibrateWebcam}
             onToggleWebcam={() => void handleToggleWebcam()}
@@ -377,33 +627,32 @@ export const App: React.FC = () => {
             onSelectBackground={setBackground}
             onSelectCameraPreset={handleCameraPreset}
             onSelectLighting={setLighting}
-            onUpdateAccessories={handleUpdateAccessories}
             onSnapshot={handleSnapshot}
           />
 
           <BottomDock
             emotion={emotion}
             animationMode={animationMode}
+            animations={activeMeta.animations}
             darkUi={darkUi}
             onSelectEmotion={setEmotion}
             onSelectAnimation={setAnimationMode}
           />
 
-          {/* Subtle keyboard/interaction hint on bottom-left desktop */}
           <div
-            className={`pointer-events-none fixed bottom-4 left-4 z-20 hidden items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-[11px] font-medium xl:flex ${
+            className={`pointer-events-none fixed bottom-4 left-4 z-20 hidden items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-[11px] font-medium 2xl:flex ${
               darkUi
                 ? 'bg-slate-900/50 text-slate-300 backdrop-blur-md'
                 : 'bg-white/60 text-slate-600 backdrop-blur-md'
             }`}
           >
             <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-            <span>Клик — погладить · 1–8 эмоции · H — OBS</span>
+            <span>C — кастомка · 1–8 эмоции · H — OBS</span>
           </div>
         </>
       )}
 
-      {/* Discrete restore button in OBS mode (nearly invisible until hovered) */}
+      {/* Discrete restore button in OBS mode */}
       {obsMode && (
         <button
           type="button"

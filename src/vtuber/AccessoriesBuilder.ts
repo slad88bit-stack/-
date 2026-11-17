@@ -1,38 +1,27 @@
 import * as THREE from 'three';
-import type { AccessoriesState } from '../types/vtuber';
+import type { AccessoriesState, CharacterId } from '../types/vtuber';
 
 export interface AccessoriesHandles {
-  root: THREE.Group;
-  headphones: THREE.Group;
-  crown: THREE.Group;
-  sunglasses: THREE.Group;
-  halo: THREE.Group;
+  headRoot: THREE.Group;
+  torsoRoot: THREE.Group;
   update: (time: number, isTalking: boolean) => void;
   applyState: (state: AccessoriesState) => void;
+  configureForCharacter: (characterId: CharacterId, capVisible: boolean) => void;
+  setAccentColor: (hex: string) => void;
 }
 
-export function buildHeadAccessories(): AccessoriesHandles {
-  const root = new THREE.Group();
-  root.name = 'VTuber_Accessories';
+export function buildCharacterAccessories(): AccessoriesHandles {
+  const headRoot = new THREE.Group();
+  headRoot.name = 'VTuber_HeadAccessories';
 
-  // --- 1. STREAMER HEADPHONES ---
-  const headphones = new THREE.Group();
-  headphones.name = 'Acc_Headphones';
+  const torsoRoot = new THREE.Group();
+  torsoRoot.name = 'VTuber_TorsoAccessories';
 
-  const bandMat = new THREE.MeshStandardMaterial({
-    color: 0xf8fafc,
-    roughness: 0.28,
-    metalness: 0.08,
-  });
+  // Shared customizable accent materials
   const accentMat = new THREE.MeshStandardMaterial({
-    color: 0x0648a6,
+    color: 0x38bdf8,
     roughness: 0.3,
-    metalness: 0.15,
-  });
-  const cushionMat = new THREE.MeshStandardMaterial({
-    color: 0x1e293b,
-    roughness: 0.72,
-    metalness: 0.02,
+    metalness: 0.14,
   });
   const ledRingMat = new THREE.MeshStandardMaterial({
     color: 0x38bdf8,
@@ -47,47 +36,55 @@ export function buildHeadAccessories(): AccessoriesHandles {
     roughness: 0.25,
   });
 
-  // Curved headband arcing cleanly over Baby_Head (local y top is 0.849, half-width is 0.469)
-  const bandGeom = new THREE.TorusGeometry(0.515, 0.044, 16, 44, Math.PI);
+  // --- 1. STREAMER HEADPHONES ---
+  const headphones = new THREE.Group();
+  headphones.name = 'Acc_Headphones';
+
+  const bandMat = new THREE.MeshStandardMaterial({
+    color: 0xf8fafc,
+    roughness: 0.28,
+    metalness: 0.08,
+  });
+  const cushionMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    roughness: 0.72,
+    metalness: 0.02,
+  });
+
+  const bandGeom = new THREE.TorusGeometry(0.525, 0.044, 16, 44, Math.PI);
   const band = new THREE.Mesh(bandGeom, bandMat);
-  band.position.set(0, 0.43, 0);
-  band.scale.set(1.0, 0.94, 1.35);
+  band.position.set(0, 0.44, 0);
+  band.scale.set(1.0, 0.96, 1.35);
   band.castShadow = true;
   headphones.add(band);
 
-  // Soft top cushion pad under headband
-  const topPadGeom = new THREE.TorusGeometry(0.478, 0.026, 12, 24, Math.PI * 0.42);
+  const topPadGeom = new THREE.TorusGeometry(0.488, 0.026, 12, 24, Math.PI * 0.42);
   const topPad = new THREE.Mesh(topPadGeom, accentMat);
-  topPad.position.set(0, 0.43, 0);
+  topPad.position.set(0, 0.44, 0);
   topPad.rotation.z = Math.PI * 0.29;
-  topPad.scale.set(1.0, 0.94, 1.2);
+  topPad.scale.set(1.0, 0.96, 1.2);
   headphones.add(topPad);
 
-  // Left & Right chunky ear cups
   for (const side of [-1, 1]) {
     const cupGroup = new THREE.Group();
-    cupGroup.position.set(side * 0.505, 0.41, 0);
+    cupGroup.position.set(side * 0.515, 0.41, 0);
 
-    // Outer shell
     const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.155, 0.145, 0.085, 28), bandMat);
     shell.rotation.z = Math.PI / 2;
     shell.position.x = side * 0.02;
     shell.castShadow = true;
     cupGroup.add(shell);
 
-    // Blue outer cap
     const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.118, 0.128, 0.032, 28), accentMat);
     cap.rotation.z = Math.PI / 2;
     cap.position.x = side * 0.064;
     cupGroup.add(cap);
 
-    // Glowing LED ring
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.125, 0.011, 12, 32), ledRingMat);
     ring.rotation.y = Math.PI / 2;
     ring.position.x = side * 0.068;
     cupGroup.add(ring);
 
-    // Plush cushion against head
     const cushion = new THREE.Mesh(new THREE.TorusGeometry(0.118, 0.044, 14, 28), cushionMat);
     cushion.rotation.y = Math.PI / 2;
     cushion.position.x = -side * 0.024;
@@ -96,9 +93,8 @@ export function buildHeadAccessories(): AccessoriesHandles {
     headphones.add(cupGroup);
   }
 
-  // Curved boom microphone extending from viewer-left cup (-X) toward lower cheek
   const micCurve = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(-0.53, 0.36, 0.06),
+    new THREE.Vector3(-0.54, 0.36, 0.06),
     new THREE.Vector3(-0.52, 0.25, 0.26),
     new THREE.Vector3(-0.34, 0.2, 0.43),
     new THREE.Vector3(-0.18, 0.22, 0.455),
@@ -116,7 +112,7 @@ export function buildHeadAccessories(): AccessoriesHandles {
   headphones.add(micLed);
 
   headphones.visible = false;
-  root.add(headphones);
+  headRoot.add(headphones);
 
   // --- 2. GOLDEN CROWN ---
   const crown = new THREE.Group();
@@ -169,13 +165,12 @@ export function buildHeadAccessories(): AccessoriesHandles {
   }
 
   crown.visible = false;
-  root.add(crown);
+  headRoot.add(crown);
 
   // --- 3. COOL STREAMER SUNGLASSES ---
   const sunglasses = new THREE.Group();
   sunglasses.name = 'Acc_Sunglasses';
-  // Eye center in Head local coords is y ~ 0.355, z ~ 0.405
-  sunglasses.position.set(0, 0.355, 0.415);
+  sunglasses.position.set(0, 0.335, 0.415);
 
   const frameMat = new THREE.MeshStandardMaterial({
     color: 0x111827,
@@ -193,7 +188,6 @@ export function buildHeadAccessories(): AccessoriesHandles {
     opacity: 0.55,
   });
 
-  // Left & Right frames + lenses
   for (const side of [-1, 1]) {
     const lensFrame = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.145, 0.036), frameMat);
     lensFrame.position.set(side * 0.18, 0, 0);
@@ -204,13 +198,11 @@ export function buildHeadAccessories(): AccessoriesHandles {
     lens.position.set(side * 0.18, 0, 0.004);
     sunglasses.add(lens);
 
-    // Classic diagonal pixel-style shine glint!
     const glint = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.085, 0.008), glintMat);
     glint.position.set(side * 0.18 - 0.045, 0.005, 0.025);
     glint.rotation.z = -0.5;
     sunglasses.add(glint);
 
-    // Side arm temples hugging the head
     const arm = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.034, 0.44), frameMat);
     arm.position.set(side * 0.465, 0.02, -0.22);
     sunglasses.add(arm);
@@ -220,18 +212,18 @@ export function buildHeadAccessories(): AccessoriesHandles {
     sunglasses.add(hinge);
   }
 
-  // Center bridge
   const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.038, 0.036), frameMat);
   bridge.position.set(0, 0.022, 0);
   sunglasses.add(bridge);
 
   sunglasses.visible = false;
-  root.add(sunglasses);
+  headRoot.add(sunglasses);
 
   // --- 4. FLOATING GOLDEN HALO ---
   const halo = new THREE.Group();
   halo.name = 'Acc_Halo';
-  halo.position.set(0, 1.03, 0);
+  let haloBaseY = 1.03;
+  halo.position.set(0, haloBaseY, 0);
 
   const haloMat = new THREE.MeshStandardMaterial({
     color: 0xffe478,
@@ -245,17 +237,124 @@ export function buildHeadAccessories(): AccessoriesHandles {
   halo.add(haloRing);
 
   halo.visible = false;
-  root.add(halo);
+  headRoot.add(halo);
+
+  // --- 5. KAWAII CAT EARS ---
+  const catEars = new THREE.Group();
+  catEars.name = 'Acc_CatEars';
+  catEars.position.set(0, 0.82, 0.02);
+
+  const earOuterMat = new THREE.MeshStandardMaterial({
+    color: 0x1e2430,
+    roughness: 0.45,
+    metalness: 0.05,
+  });
+
+  // Thin headband base connecting ears
+  const earBand = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.024, 10, 32, Math.PI * 0.72), earOuterMat);
+  earBand.position.set(0, -0.35, 0);
+  earBand.rotation.z = Math.PI * 0.14;
+  earBand.scale.set(1.0, 0.88, 1.0);
+  catEars.add(earBand);
+
+  for (const side of [-1, 1]) {
+    const ear = new THREE.Group();
+    ear.position.set(side * 0.27, 0.08, 0);
+    ear.rotation.z = -side * 0.24;
+
+    const outer = new THREE.Mesh(new THREE.ConeGeometry(0.135, 0.25, 4), earOuterMat);
+    outer.scale.set(1.0, 1.0, 0.52);
+    outer.rotation.y = Math.PI / 4;
+    outer.castShadow = true;
+    ear.add(outer);
+
+    const inner = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.16, 4), accentMat);
+    inner.scale.set(1.0, 1.0, 0.35);
+    inner.rotation.y = Math.PI / 4;
+    inner.position.set(0, -0.015, 0.036);
+    ear.add(inner);
+
+    catEars.add(ear);
+  }
+
+  catEars.visible = false;
+  headRoot.add(catEars);
+
+  // --- 6. STREAMER BOWTIE (Torso bone) ---
+  const bowtie = new THREE.Group();
+  bowtie.name = 'Acc_Bowtie';
+  // Torso bone is at y=0.45; neck/collar top of Baby_Torso is y=0.71 -> local y ~ 0.23, front z ~ 0.205
+  bowtie.position.set(0, 0.225, 0.205);
+
+  const bowKnot = new THREE.Mesh(new THREE.SphereGeometry(0.044, 16, 16), accentMat);
+  bowKnot.scale.set(0.95, 0.85, 0.75);
+  bowtie.add(bowKnot);
+
+  for (const side of [-1, 1]) {
+    const wing = new THREE.Mesh(new THREE.ConeGeometry(0.068, 0.13, 4), accentMat);
+    wing.rotation.z = side * (Math.PI / 2);
+    wing.rotation.y = Math.PI / 4;
+    wing.scale.set(1.0, 1.0, 0.45);
+    wing.position.set(side * 0.072, 0, -0.005);
+    wing.castShadow = true;
+    bowtie.add(wing);
+  }
+
+  bowtie.visible = false;
+  torsoRoot.add(bowtie);
+
+  // --- 7. MINI VTUBER WINGS (Torso bone) ---
+  const wings = new THREE.Group();
+  wings.name = 'Acc_Wings';
+  wings.position.set(0, 0.14, -0.2);
+
+  const wingMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    emissive: 0xe0f2fe,
+    emissiveIntensity: 0.2,
+    roughness: 0.32,
+    metalness: 0.05,
+  });
+
+  const leftWingPivot = new THREE.Group();
+  leftWingPivot.position.set(0.09, 0.03, 0);
+  const rightWingPivot = new THREE.Group();
+  rightWingPivot.position.set(-0.09, 0.03, 0);
+
+  const buildWingSide = (pivot: THREE.Group, side: number) => {
+    const feathers: Array<[number, number, number, number, number]> = [
+      [0.16, 0.09, 0.24, 0.09, -0.22],
+      [0.2, 0.01, 0.26, 0.08, -0.02],
+      [0.14, -0.07, 0.18, 0.07, 0.22],
+    ];
+    for (const [fx, fy, w, h, rot] of feathers) {
+      const feather = new THREE.Mesh(new THREE.CapsuleGeometry(h * 0.52, w * 0.65, 6, 12), wingMat);
+      feather.rotation.z = Math.PI / 2 + side * rot;
+      feather.scale.set(1, 1, 0.36);
+      feather.position.set(side * fx, fy, -0.02);
+      feather.castShadow = true;
+      pivot.add(feather);
+    }
+
+    const trim = new THREE.Mesh(new THREE.CapsuleGeometry(0.026, 0.15, 6, 10), accentMat);
+    trim.rotation.z = Math.PI / 2 - side * 0.28;
+    trim.position.set(side * 0.13, 0.13, 0.0);
+    pivot.add(trim);
+  };
+
+  buildWingSide(leftWingPivot, 1);
+  buildWingSide(rightWingPivot, -1);
+  wings.add(leftWingPivot, rightWingPivot);
+
+  wings.visible = false;
+  torsoRoot.add(wings);
 
   return {
-    root,
-    headphones,
-    crown,
-    sunglasses,
-    halo,
+    headRoot,
+    torsoRoot,
     update(time: number, isTalking: boolean) {
       if (halo.visible) {
-        halo.position.y = 1.03 + Math.sin(time * 2.8) * 0.035;
+        halo.position.y = haloBaseY + Math.sin(time * 2.8) * 0.035;
         halo.rotation.z = Math.sin(time * 1.4) * 0.05;
       }
       if (headphones.visible) {
@@ -265,12 +364,42 @@ export function buildHeadAccessories(): AccessoriesHandles {
         micTipMat.color.setHex(isTalking ? 0x22c55e : 0x38bdf8);
         micTipMat.emissiveIntensity = isTalking ? 2.2 : 0.7;
       }
+      if (wings.visible) {
+        const speed = isTalking ? 9.5 : 3.2;
+        const amp = isTalking ? 0.32 : 0.16;
+        const flap = Math.sin(time * speed) * amp;
+        leftWingPivot.rotation.y = -0.35 + flap;
+        rightWingPivot.rotation.y = 0.35 - flap;
+      }
     },
     applyState(state: AccessoriesState) {
       headphones.visible = state.headphones;
       crown.visible = state.crown;
       sunglasses.visible = state.sunglasses;
       halo.visible = state.halo;
+      catEars.visible = state.catEars;
+      bowtie.visible = state.bowtie;
+      wings.visible = state.wings;
+    },
+    configureForCharacter(characterId: CharacterId, capVisible: boolean) {
+      const hasActiveCap = characterId !== 'noob' && capVisible;
+      const capLift = hasActiveCap ? 0.062 : 0;
+
+      // Exact measured Head-local eye Y: Baby Noob = 0.335, Classic & Modern Guest = 0.420!
+      sunglasses.position.y = characterId === 'noob' ? 0.335 : 0.42;
+      sunglasses.position.z = characterId === 'noob' ? 0.415 : 0.418;
+
+      crown.position.y = 0.84 + capLift;
+      catEars.position.y = 0.82 + capLift;
+      haloBaseY = 1.03 + capLift;
+      halo.position.y = haloBaseY;
+
+      headphones.position.y = hasActiveCap ? 0.032 : 0;
+    },
+    setAccentColor(hex: string) {
+      accentMat.color.set(hex);
+      ledRingMat.color.set(hex);
+      ledRingMat.emissive.set(hex);
     },
   };
 }

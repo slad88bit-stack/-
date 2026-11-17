@@ -1,3 +1,7 @@
+export type CharacterId = 'noob' | 'guest' | 'modern_guest';
+
+export type FaceStyleId = 'auto' | 'kawaii_dots' | 'classic_pills' | 'anime_sparkle';
+
 export type EmotionId =
   | 'happy'
   | 'surprised'
@@ -8,13 +12,7 @@ export type EmotionId =
   | 'sleepy'
   | 'cry';
 
-export type AnimationId =
-  | 'live'
-  | '01_Happy_Bounce_Idle'
-  | '02_Cute_Waddle_Walk'
-  | '03_Excited_Jump_Wave'
-  | '04_Happy_Baby_Dance'
-  | '05_Playful_Spin_Jump';
+export type AnimationId = string; // 'live' or exact glTF clip name
 
 export type BackgroundId =
   | 'studio'
@@ -37,7 +35,26 @@ export interface AccessoriesState {
   crown: boolean;
   sunglasses: boolean;
   halo: boolean;
+  catEars: boolean;
+  bowtie: boolean;
+  wings: boolean;
   blushAlways: boolean;
+}
+
+export interface CharacterCustomization {
+  skinColor: string;
+  torsoColor: string;
+  armsColor: string;
+  legsColor: string;
+  capVisible: boolean;
+  capDomeColor: string;
+  capAccentColor: string;
+  shoeColor: string;
+  faceStyle: FaceStyleId;
+  eyeColor: string;
+  mouthColor: string;
+  showPrint: boolean;
+  accessoryAccentColor: string;
 }
 
 export interface TrackingSettings {
@@ -53,35 +70,40 @@ export interface TrackingSettings {
 }
 
 export interface RawWebcamPose {
-  yaw: number; // radians, +right / -left
-  pitch: number; // radians, +down / -up
-  roll: number; // radians, +tilt right
-  x: number; // normalized -1..1
-  y: number; // normalized -1..1
-  blinkL: number; // 0..1 (viewer's left eye)
-  blinkR: number; // 0..1 (viewer's right eye)
-  gazeX: number; // -1..1
-  gazeY: number; // -1..1
-  jawOpen: number; // 0..1
-  mouthSmile: number; // -1..1
-  mouthRound: number; // 0..1
-  browUp: number; // 0..1
-  browDown: number; // 0..1
+  yaw: number;
+  pitch: number;
+  roll: number;
+  x: number;
+  y: number;
+  blinkL: number;
+  blinkR: number;
+  gazeX: number;
+  gazeY: number;
+  jawOpen: number;
+  mouthSmile: number;
+  mouthRound: number;
+  browUp: number;
+  browDown: number;
   faceDetected: boolean;
 }
 
 export interface FaceRenderState {
+  characterId: CharacterId;
+  faceStyle: FaceStyleId;
+  skinColor: string;
+  eyeColor: string;
+  mouthColor: string;
   emotion: EmotionId;
-  blinkL: number; // 0..1
-  blinkR: number; // 0..1
-  gazeX: number; // -1..1
-  gazeY: number; // -1..1
-  mouthOpen: number; // 0..1
-  mouthSmile: number; // -1..1
-  mouthRound: number; // 0..1
-  browUp: number; // 0..1
-  browDown: number; // 0..1
-  blushIntensity: number; // 0..1
+  blinkL: number;
+  blinkR: number;
+  gazeX: number;
+  gazeY: number;
+  mouthOpen: number;
+  mouthSmile: number;
+  mouthRound: number;
+  browUp: number;
+  browDown: number;
+  blushIntensity: number;
   isLipSyncActive: boolean;
   time: number;
 }
@@ -126,13 +148,324 @@ export interface AnimationMeta {
   loop: boolean;
 }
 
-export const ANIMATIONS: AnimationMeta[] = [
-  { id: 'live', label: 'Живой VTuber', shortLabel: 'VTuber', loop: true },
-  { id: '01_Happy_Bounce_Idle', label: 'Счастливый отскок', shortLabel: 'Idle', loop: true },
-  { id: '02_Cute_Waddle_Walk', label: 'Милая походка', shortLabel: 'Walk', loop: true },
-  { id: '03_Excited_Jump_Wave', label: 'Приветствие', shortLabel: 'Wave', loop: false },
-  { id: '04_Happy_Baby_Dance', label: 'Танец Нуба', shortLabel: 'Dance', loop: true },
-  { id: '05_Playful_Spin_Jump', label: 'Сальто-прыжок', shortLabel: 'Spin', loop: false },
+export interface CharacterMeta {
+  id: CharacterId;
+  name: string;
+  shortName: string;
+  subtitle: string;
+  modelUrl: string;
+  downloadName: string;
+  sourceFile: string;
+  badgeColor: string;
+  hasCap: boolean;
+  hasShoes: boolean;
+  defaultCustomization: CharacterCustomization;
+  animations: AnimationMeta[];
+}
+
+export const CHARACTERS: CharacterMeta[] = [
+  {
+    id: 'noob',
+    name: 'Baby Noob',
+    shortName: 'Noob',
+    subtitle: 'Классический Нуб',
+    modelUrl: '/models/baby_noob.glb',
+    downloadName: 'baby_noob_vtuber.glb',
+    sourceFile: 'baby_noob_animated.blend',
+    badgeColor: '#edc114',
+    hasCap: false,
+    hasShoes: false,
+    defaultCustomization: {
+      skinColor: '#edc114',
+      torsoColor: '#0648a6',
+      armsColor: '#edc114',
+      legsColor: '#99b236',
+      capVisible: false,
+      capDomeColor: '#141418',
+      capAccentColor: '#cd1515',
+      shoeColor: '#8f1d26',
+      faceStyle: 'auto',
+      eyeColor: '#0c0c0c',
+      mouthColor: '#d8244e',
+      showPrint: true,
+      accessoryAccentColor: '#38bdf8',
+    },
+    animations: [
+      { id: 'live', label: 'Живой VTuber', shortLabel: 'VTuber', loop: true },
+      { id: '01_Happy_Bounce_Idle', label: 'Счастливый отскок', shortLabel: 'Idle', loop: true },
+      { id: '02_Cute_Waddle_Walk', label: 'Милая походка', shortLabel: 'Walk', loop: true },
+      { id: '03_Excited_Jump_Wave', label: 'Приветствие', shortLabel: 'Wave', loop: false },
+      { id: '04_Happy_Baby_Dance', label: 'Танец Нуба', shortLabel: 'Dance', loop: true },
+      { id: '05_Playful_Spin_Jump', label: 'Сальто-прыжок', shortLabel: 'Spin', loop: false },
+    ],
+  },
+  {
+    id: 'guest',
+    name: 'Baby Guest',
+    shortName: 'Guest',
+    subtitle: 'Классический Гость',
+    modelUrl: '/models/baby_guest.glb',
+    downloadName: 'baby_guest_vtuber.glb',
+    sourceFile: 'baby_guest_animated.glb',
+    badgeColor: '#dc2626',
+    hasCap: true,
+    hasShoes: false,
+    defaultCustomization: {
+      skinColor: '#eef0f4',
+      torsoColor: '#14151a',
+      armsColor: '#14151a',
+      legsColor: '#14151a',
+      capVisible: true,
+      capDomeColor: '#14151a',
+      capAccentColor: '#cd1515',
+      shoeColor: '#8f1d26',
+      faceStyle: 'auto',
+      eyeColor: '#111318',
+      mouthColor: '#d8244e',
+      showPrint: true,
+      accessoryAccentColor: '#ef4444',
+    },
+    animations: [
+      { id: 'live', label: 'Живой VTuber', shortLabel: 'VTuber', loop: true },
+      { id: 'Emote_California_Girls', label: 'California Girls', shortLabel: 'Cali', loop: true },
+      { id: 'Guest_01_Cool_Cap_Idle', label: 'Крутой Idle', shortLabel: 'Idle', loop: true },
+      { id: 'Guest_02_Swagger_Walk', label: 'Сваг-походка', shortLabel: 'Walk', loop: true },
+      { id: 'Guest_03_Hype_Jump_Salute', label: 'Прыжок-салют', shortLabel: 'Salute', loop: false },
+      { id: 'Guest_04_Breakdance_Groove', label: 'Брейкданс', shortLabel: 'Break', loop: true },
+      { id: 'Guest_05_360_Frontflip', label: 'Сальто 360°', shortLabel: 'Flip', loop: false },
+      { id: 'Guest_06_Turbo_Sprint', label: 'Турбо-спринт', shortLabel: 'Sprint', loop: true },
+    ],
+  },
+  {
+    id: 'modern_guest',
+    name: 'Modern Guest',
+    shortName: 'Modern',
+    subtitle: 'Современный Гость',
+    modelUrl: '/models/baby_modern_guest.glb',
+    downloadName: 'baby_modern_guest_vtuber.glb',
+    sourceFile: 'baby_modern_guest_animated.glb',
+    badgeColor: '#2563eb',
+    hasCap: true,
+    hasShoes: true,
+    defaultCustomization: {
+      skinColor: '#cfd3da',
+      torsoColor: '#1a1b20',
+      armsColor: '#1a1b20',
+      legsColor: '#202a38',
+      capVisible: true,
+      capDomeColor: '#14151a',
+      capAccentColor: '#1d1f26',
+      shoeColor: '#8f1d26',
+      faceStyle: 'auto',
+      eyeColor: '#111318',
+      mouthColor: '#d8244e',
+      showPrint: true,
+      accessoryAccentColor: '#38bdf8',
+    },
+    animations: [
+      { id: 'live', label: 'Живой VTuber', shortLabel: 'VTuber', loop: true },
+      { id: 'Emote_California_Girls', label: 'California Girls', shortLabel: 'Cali', loop: true },
+      { id: 'ModGuest_01_Chill_Pocket_Idle', label: 'Чилл-стойка', shortLabel: 'Idle', loop: true },
+      { id: 'ModGuest_02_Sneaker_Bounce_Walk', label: 'Походка в кедах', shortLabel: 'Walk', loop: true },
+      { id: 'ModGuest_03_Parkour_Vault_Jump', label: 'Паркур-прыжок', shortLabel: 'Vault', loop: false },
+      { id: 'ModGuest_04_Shuffle_Footwork_Dance', label: 'Шаффл-танец', shortLabel: 'Shuffle', loop: true },
+      { id: 'ModGuest_05_360_Backflip', label: 'Бэкфлип 360°', shortLabel: 'Backflip', loop: false },
+      { id: 'ModGuest_06_Parkour_Dash_Run', label: 'Паркур-рывок', shortLabel: 'Dash', loop: true },
+    ],
+  },
+];
+
+export function getCharacterMeta(id: CharacterId): CharacterMeta {
+  return CHARACTERS.find((c) => c.id === id) ?? CHARACTERS[0];
+}
+
+export interface CustomSkinPreset {
+  id: string;
+  label: string;
+  emoji: string;
+  swatch: string;
+  apply: (char: CharacterMeta) => {
+    custom: Partial<CharacterCustomization>;
+    accessories?: Partial<AccessoriesState>;
+  };
+}
+
+export const CUSTOM_PRESETS: CustomSkinPreset[] = [
+  {
+    id: 'original',
+    label: 'Оригинал',
+    emoji: '✨',
+    swatch: 'linear-gradient(135deg, #facc15 0%, #2563eb 50%, #18181b 100%)',
+    apply: (char) => ({
+      custom: { ...char.defaultCustomization },
+      accessories: { ...DEFAULT_ACCESSORIES },
+    }),
+  },
+  {
+    id: 'cyber_neon',
+    label: 'Кибер-неон',
+    emoji: '⚡',
+    swatch: 'linear-gradient(135deg, #0f172a 0%, #7c3aed 55%, #06b6d4 100%)',
+    apply: (char) => ({
+      custom: {
+        skinColor: char.id === 'noob' ? '#fde047' : '#e2e8f0',
+        torsoColor: '#13162b',
+        armsColor: '#1e1b4b',
+        legsColor: '#0f172a',
+        capVisible: char.hasCap,
+        capDomeColor: '#13162b',
+        capAccentColor: '#06b6d4',
+        shoeColor: '#7c3aed',
+        faceStyle: 'anime_sparkle',
+        eyeColor: '#0284c7',
+        mouthColor: '#ec4899',
+        showPrint: true,
+        accessoryAccentColor: '#22d3ee',
+      },
+      accessories: {
+        headphones: true,
+        sunglasses: false,
+        crown: false,
+        halo: false,
+        catEars: false,
+        bowtie: false,
+        wings: false,
+        blushAlways: false,
+      },
+    }),
+  },
+  {
+    id: 'gold_vip',
+    label: 'Золотой VIP',
+    emoji: '👑',
+    swatch: 'linear-gradient(135deg, #18181b 0%, #f59e0b 60%, #fef08a 100%)',
+    apply: (char) => ({
+      custom: {
+        skinColor: char.id === 'noob' ? '#f5c518' : '#f4f4f5',
+        torsoColor: '#18181b',
+        armsColor: '#27272a',
+        legsColor: '#18181b',
+        capVisible: false,
+        capDomeColor: '#18181b',
+        capAccentColor: '#f59e0b',
+        shoeColor: '#d97706',
+        faceStyle: 'auto',
+        eyeColor: '#111111',
+        mouthColor: '#e11d48',
+        showPrint: true,
+        accessoryAccentColor: '#fbbf24',
+      },
+      accessories: {
+        crown: true,
+        sunglasses: true,
+        bowtie: true,
+        headphones: false,
+        halo: false,
+        catEars: false,
+        wings: false,
+        blushAlways: false,
+      },
+    }),
+  },
+  {
+    id: 'kawaii_pastel',
+    label: 'Каваий',
+    emoji: '🌸',
+    swatch: 'linear-gradient(135deg, #fbcfe8 0%, #c4b5fd 55%, #bae6fd 100%)',
+    apply: (char) => ({
+      custom: {
+        skinColor: char.id === 'noob' ? '#ffe380' : '#fff5f7',
+        torsoColor: '#f472b6',
+        armsColor: '#f9a8d4',
+        legsColor: '#a78bfa',
+        capVisible: char.hasCap,
+        capDomeColor: '#c4b5fd',
+        capAccentColor: '#fb7185',
+        shoeColor: '#ec4899',
+        faceStyle: 'anime_sparkle',
+        eyeColor: '#7c3aed',
+        mouthColor: '#fb7185',
+        showPrint: true,
+        accessoryAccentColor: '#f472b6',
+      },
+      accessories: {
+        catEars: true,
+        blushAlways: true,
+        bowtie: true,
+        headphones: false,
+        crown: false,
+        sunglasses: false,
+        halo: false,
+        wings: false,
+      },
+    }),
+  },
+  {
+    id: 'redline_gamer',
+    label: 'Геймер',
+    emoji: '🎮',
+    swatch: 'linear-gradient(135deg, #111827 0%, #dc2626 65%, #f97316 100%)',
+    apply: (char) => ({
+      custom: {
+        skinColor: char.id === 'noob' ? '#f4c430' : '#f1f5f9',
+        torsoColor: '#18181b',
+        armsColor: '#991b1b',
+        legsColor: '#1f2937',
+        capVisible: char.hasCap,
+        capDomeColor: '#18181b',
+        capAccentColor: '#ef4444',
+        shoeColor: '#dc2626',
+        faceStyle: 'auto',
+        eyeColor: '#0f172a',
+        mouthColor: '#ef4444',
+        showPrint: true,
+        accessoryAccentColor: '#ef4444',
+      },
+      accessories: {
+        headphones: true,
+        crown: false,
+        sunglasses: false,
+        halo: false,
+        catEars: false,
+        bowtie: false,
+        wings: false,
+        blushAlways: false,
+      },
+    }),
+  },
+  {
+    id: 'angel_stream',
+    label: 'Ангел',
+    emoji: '😇',
+    swatch: 'linear-gradient(135deg, #ffffff 0%, #bae6fd 55%, #fde68a 100%)',
+    apply: (char) => ({
+      custom: {
+        skinColor: char.id === 'noob' ? '#fde68a' : '#f8fafc',
+        torsoColor: '#e0f2fe',
+        armsColor: '#f0f9ff',
+        legsColor: '#7dd3fc',
+        capVisible: false,
+        capDomeColor: '#f8fafc',
+        capAccentColor: '#38bdf8',
+        shoeColor: '#0284c7',
+        faceStyle: 'kawaii_dots',
+        eyeColor: '#1e3a8a',
+        mouthColor: '#fb7185',
+        showPrint: false,
+        accessoryAccentColor: '#38bdf8',
+      },
+      accessories: {
+        halo: true,
+        wings: true,
+        blushAlways: true,
+        headphones: false,
+        crown: false,
+        sunglasses: false,
+        catEars: false,
+        bowtie: false,
+      },
+    }),
+  },
 ];
 
 export interface BackgroundMeta {
@@ -189,6 +522,9 @@ export const DEFAULT_ACCESSORIES: AccessoriesState = {
   crown: false,
   sunglasses: false,
   halo: false,
+  catEars: false,
+  bowtie: false,
+  wings: false,
   blushAlways: false,
 };
 

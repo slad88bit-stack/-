@@ -2,32 +2,43 @@ import React, { useEffect, useRef } from 'react';
 import {
   Camera,
   Crosshair,
+  Dices,
   Download,
   Image as ImageIcon,
   Layers,
+  Palette,
+  RotateCcw,
   Sliders,
-  Sparkles,
   Sun,
   Video,
   X,
 } from 'lucide-react';
 import {
   BACKGROUNDS,
+  CHARACTERS,
+  CUSTOM_PRESETS,
+  getCharacterMeta,
   type AccessoriesState,
   type BackgroundId,
   type CameraPresetId,
+  type CharacterCustomization,
+  type CharacterId,
+  type FaceStyleId,
   type LightingPresetId,
   type TelemetrySnapshot,
   type TrackingSettings,
   type WebcamStatus,
 } from '../types/vtuber';
 
-export type DrawerTab = 'tracking' | 'stage' | 'style';
+export type DrawerTab = 'customizer' | 'tracking' | 'stage';
 
 interface StudioDrawerProps {
   open: boolean;
   tab: DrawerTab;
   darkUi: boolean;
+  characterId: CharacterId;
+  customization: CharacterCustomization;
+  accessories: AccessoriesState;
   webcamStatus: WebcamStatus;
   webcamError: string | null;
   micError: string | null;
@@ -36,9 +47,14 @@ interface StudioDrawerProps {
   background: BackgroundId;
   cameraPreset: CameraPresetId;
   lighting: LightingPresetId;
-  accessories: AccessoriesState;
   onChangeTab: (tab: DrawerTab) => void;
   onClose: () => void;
+  onSelectCharacter: (id: CharacterId) => void;
+  onUpdateCustomization: (patch: Partial<CharacterCustomization>) => void;
+  onApplyPreset: (presetId: string) => void;
+  onRandomizeSkin: () => void;
+  onResetCustomization: () => void;
+  onUpdateAccessories: (patch: Partial<AccessoriesState>) => void;
   onAttachPreviewCanvas: (canvas: HTMLCanvasElement | null) => void;
   onCalibrateWebcam: () => void;
   onToggleWebcam: () => void;
@@ -46,7 +62,6 @@ interface StudioDrawerProps {
   onSelectBackground: (bg: BackgroundId) => void;
   onSelectCameraPreset: (preset: CameraPresetId) => void;
   onSelectLighting: (light: LightingPresetId) => void;
-  onUpdateAccessories: (patch: Partial<AccessoriesState>) => void;
   onSnapshot: () => void;
 }
 
@@ -64,6 +79,13 @@ const LIGHTING_OPTIONS: Array<{ id: LightingPresetId; label: string }> = [
   { id: 'stream', label: 'Стрим' },
 ];
 
+const FACE_STYLE_OPTIONS: Array<{ id: FaceStyleId; label: string }> = [
+  { id: 'auto', label: 'Родное' },
+  { id: 'kawaii_dots', label: 'Нуб •ᴗ•' },
+  { id: 'classic_pills', label: 'Гость' },
+  { id: 'anime_sparkle', label: 'Аниме ✨' },
+];
+
 const ACCESSORY_LIST: Array<{
   key: keyof AccessoriesState;
   label: string;
@@ -71,16 +93,26 @@ const ACCESSORY_LIST: Array<{
   emoji: string;
 }> = [
   { key: 'headphones', label: 'Наушники стримера', desc: 'Гарнитура с LED-кольцом и микрофоном', emoji: '🎧' },
+  { key: 'catEars', label: 'Кошачьи ушки', desc: 'VTuber-ушки с твоим акцентным цветом', emoji: '🐱' },
   { key: 'crown', label: 'Золотая корона', desc: 'Корона с самоцветами на голове', emoji: '👑' },
-  { key: 'sunglasses', label: 'Очки стримера', desc: 'Стильные тёмные очки с бликом', emoji: '🕶️' },
+  { key: 'sunglasses', label: 'Очки стримера', desc: 'Стильные очки точно по линии глаз', emoji: '🕶️' },
   { key: 'halo', label: 'Светящийся нимб', desc: 'Парящее золотое кольцо сверху', emoji: '😇' },
+  { key: 'bowtie', label: 'Бабочка-галстук', desc: 'Стильная бабочка на воротнике', emoji: '🎀' },
+  { key: 'wings', label: 'Мини-крылышки', desc: 'Машут за спиной во время речи', emoji: '🪽' },
   { key: 'blushAlways', label: 'Постоянный румянец', desc: 'Милые розовые щёчки всегда', emoji: '🌸' },
 ];
+
+const SKIN_SWATCHES = ['#edc114', '#eef0f4', '#cfd3da', '#fde68a', '#ffd5b8', '#fbcfe8', '#bae6fd', '#27272a'];
+const OUTFIT_SWATCHES = ['#0648a6', '#14151a', '#1a1b20', '#dc2626', '#7c3aed', '#059669', '#f472b6', '#f8fafc'];
+const ACCENT_SWATCHES = ['#cd1515', '#38bdf8', '#f59e0b', '#ec4899', '#8b5cf6', '#22c55e', '#1d1f26', '#ffffff'];
 
 export const StudioDrawer: React.FC<StudioDrawerProps> = ({
   open,
   tab,
   darkUi,
+  characterId,
+  customization,
+  accessories,
   webcamStatus,
   webcamError,
   micError,
@@ -89,9 +121,14 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
   background,
   cameraPreset,
   lighting,
-  accessories,
   onChangeTab,
   onClose,
+  onSelectCharacter,
+  onUpdateCustomization,
+  onApplyPreset,
+  onRandomizeSkin,
+  onResetCustomization,
+  onUpdateAccessories,
   onAttachPreviewCanvas,
   onCalibrateWebcam,
   onToggleWebcam,
@@ -99,10 +136,10 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
   onSelectBackground,
   onSelectCameraPreset,
   onSelectLighting,
-  onUpdateAccessories,
   onSnapshot,
 }) => {
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const activeMeta = getCharacterMeta(characterId);
 
   useEffect(() => {
     if (open && tab === 'tracking') {
@@ -124,16 +161,20 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
   return (
     <aside
       aria-label="Панель настроек VTuber Studio"
-      className={`fixed right-3 top-[74px] bottom-[84px] z-30 flex w-[312px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-2xl ${panelClass}`}
+      className={`fixed right-3 top-[74px] bottom-[84px] z-30 flex w-[332px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-2xl ${panelClass}`}
     >
       {/* Drawer Header & Tabs */}
-      <div className={`flex items-center justify-between border-b px-3.5 py-2.5 ${darkUi ? 'border-white/10' : 'border-slate-900/8'}`}>
+      <div
+        className={`flex items-center justify-between border-b px-3 py-2.5 ${
+          darkUi ? 'border-white/10' : 'border-slate-900/8'
+        }`}
+      >
         <div className="flex items-center gap-1 rounded-xl bg-black/5 p-1">
           {(
             [
+              { id: 'customizer', label: 'Кастомка', icon: Palette },
               { id: 'tracking', label: 'Трекинг', icon: Sliders },
               { id: 'stage', label: 'Сцена', icon: Layers },
-              { id: 'style', label: 'Образ', icon: Sparkles },
             ] as const
           ).map((item) => {
             const Icon = item.icon;
@@ -162,18 +203,321 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
           onClick={onClose}
           aria-label="Закрыть панель"
           className={`cursor-pointer rounded-lg p-1.5 transition-colors ${
-            darkUi ? 'text-slate-400 hover:bg-white/10 hover:text-white' : 'text-slate-500 hover:bg-slate-900/8 hover:text-slate-900'
+            darkUi
+              ? 'text-slate-400 hover:bg-white/10 hover:text-white'
+              : 'text-slate-500 hover:bg-slate-900/8 hover:text-slate-900'
           }`}
         >
           <X className="h-4 w-4" />
         </button>
       </div>
 
-      {/* Scrollable Tab Content */}
+      {/* Scrollable Content */}
       <div className="studio-scroll flex-1 space-y-3.5 overflow-y-auto p-3.5">
+        {tab === 'customizer' && (
+          <>
+            {/* 1. Character Roster Cards */}
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider opacity-70">
+                  Персонаж ({CHARACTERS.length})
+                </span>
+                <span className={`text-[10px] font-semibold ${muted}`}>
+                  {activeMeta.animations.length - 1} аним.
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {CHARACTERS.map((ch) => {
+                  const active = ch.id === characterId;
+                  return (
+                    <button
+                      key={ch.id}
+                      type="button"
+                      onClick={() => onSelectCharacter(ch.id)}
+                      className={`flex cursor-pointer flex-col items-center rounded-xl border px-2 py-2 text-center transition-all ${
+                        active
+                          ? 'border-[#0648a6] bg-[#0648a6]/14 ring-2 ring-[#0648a6]/25'
+                          : `${cardBg} hover:border-slate-400/40`
+                      }`}
+                    >
+                      <span
+                        className="mb-1.5 flex h-7 w-7 items-center justify-center rounded-lg text-[11px] font-extrabold text-white shadow-inner"
+                        style={{ backgroundColor: ch.badgeColor }}
+                      >
+                        {ch.id === 'noob' ? 'N' : ch.id === 'guest' ? 'G' : 'M'}
+                      </span>
+                      <span className="text-[11px] font-bold leading-tight">{ch.shortName}</span>
+                      <span className={`mt-0.5 text-[9.5px] leading-tight ${muted}`}>
+                        {ch.hasCap ? 'Кепка' : 'Классик'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 2. Quick Custom Skin Presets + Randomizer */}
+            <div className={`space-y-2.5 rounded-xl border p-3 ${cardBg}`}>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider opacity-70">
+                  Скины и пресеты
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={onRandomizeSkin}
+                    title="Случайная кастомка"
+                    className="flex cursor-pointer items-center gap-1 rounded-lg bg-amber-400/25 px-2 py-1 text-[10.5px] font-bold text-amber-900 transition-colors hover:bg-amber-400/40 dark:text-amber-300"
+                  >
+                    <Dices className="h-3 w-3" />
+                    Рандом
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onResetCustomization}
+                    title="Сбросить к оригиналу"
+                    className={`flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-[10.5px] font-semibold transition-colors ${
+                      darkUi ? 'bg-white/8 hover:bg-white/15' : 'bg-slate-900/6 hover:bg-slate-900/12'
+                    }`}
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-1.5">
+                {CUSTOM_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => onApplyPreset(preset.id)}
+                    className={`group flex cursor-pointer flex-col overflow-hidden rounded-lg border text-left transition-all hover:scale-[1.02] ${
+                      darkUi
+                        ? 'border-white/10 bg-white/5 hover:border-white/30'
+                        : 'border-slate-900/10 bg-white/75 hover:border-[#0648a6]/50'
+                    }`}
+                  >
+                    <div className="h-4 w-full" style={{ background: preset.swatch }} />
+                    <div className="flex items-center gap-1 px-1.5 py-1">
+                      <span className="text-[11px]">{preset.emoji}</span>
+                      <span className="truncate text-[10px] font-bold">{preset.label}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 3. Cap & Graphic Print Toggles */}
+            <div className={`space-y-2 rounded-xl border p-3 ${cardBg}`}>
+              <div className="text-[11px] font-bold uppercase tracking-wider opacity-70">
+                Элементы образа
+              </div>
+              {activeMeta.hasCap && (
+                <ToggleRow
+                  label="Кепка на голове"
+                  checked={customization.capVisible}
+                  onChange={(v) => onUpdateCustomization({ capVisible: v })}
+                />
+              )}
+              <ToggleRow
+                label="Оригинальный принт ROBLOX"
+                checked={customization.showPrint}
+                onChange={(v) => onUpdateCustomization({ showPrint: v })}
+              />
+            </div>
+
+            {/* 4. Body & Outfit Color Customizer */}
+            <div className={`space-y-3 rounded-xl border p-3 ${cardBg}`}>
+              <div className="text-[11px] font-bold uppercase tracking-wider opacity-70">
+                Цвета персонажа
+              </div>
+
+              <ColorPickerRow
+                label="Кожа / Голова"
+                value={customization.skinColor}
+                swatches={SKIN_SWATCHES}
+                onChange={(skinColor) =>
+                  onUpdateCustomization(
+                    characterId === 'noob' ? { skinColor, armsColor: skinColor } : { skinColor },
+                  )
+                }
+              />
+
+              <ColorPickerRow
+                label={characterId === 'modern_guest' ? 'Куртка (торс)' : 'Торс / Футболка'}
+                value={customization.torsoColor}
+                swatches={OUTFIT_SWATCHES}
+                onChange={(torsoColor) => onUpdateCustomization({ torsoColor })}
+              />
+
+              <ColorPickerRow
+                label={characterId === 'noob' ? 'Руки' : 'Рукава'}
+                value={customization.armsColor}
+                swatches={characterId === 'noob' ? SKIN_SWATCHES : OUTFIT_SWATCHES}
+                onChange={(armsColor) => onUpdateCustomization({ armsColor })}
+              />
+
+              <ColorPickerRow
+                label={characterId === 'modern_guest' ? 'Джинсы' : 'Ноги / Штаны'}
+                value={customization.legsColor}
+                swatches={characterId === 'noob' ? ['#99b236', ...OUTFIT_SWATCHES.slice(0, 7)] : OUTFIT_SWATCHES}
+                onChange={(legsColor) => onUpdateCustomization({ legsColor })}
+              />
+
+              {activeMeta.hasCap && customization.capVisible && (
+                <>
+                  <ColorPickerRow
+                    label="Купол кепки"
+                    value={customization.capDomeColor}
+                    swatches={OUTFIT_SWATCHES}
+                    onChange={(capDomeColor) => onUpdateCustomization({ capDomeColor })}
+                  />
+                  <ColorPickerRow
+                    label="Козырёк и ободок кепки"
+                    value={customization.capAccentColor}
+                    swatches={ACCENT_SWATCHES}
+                    onChange={(capAccentColor) => onUpdateCustomization({ capAccentColor })}
+                  />
+                </>
+              )}
+
+              {activeMeta.hasShoes && (
+                <ColorPickerRow
+                  label="Кроссовки"
+                  value={customization.shoeColor}
+                  swatches={ACCENT_SWATCHES}
+                  onChange={(shoeColor) => onUpdateCustomization({ shoeColor })}
+                />
+              )}
+
+              <ColorPickerRow
+                label="Цвет аксессуаров / LED"
+                value={customization.accessoryAccentColor}
+                swatches={ACCENT_SWATCHES}
+                onChange={(accessoryAccentColor) => onUpdateCustomization({ accessoryAccentColor })}
+              />
+            </div>
+
+            {/* 5. Face Style & Eye/Mouth Customizer */}
+            <div className={`space-y-2.5 rounded-xl border p-3 ${cardBg}`}>
+              <div className="text-[11px] font-bold uppercase tracking-wider opacity-70">
+                Стиль лица и мимика
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {FACE_STYLE_OPTIONS.map((fs) => {
+                  const active = customization.faceStyle === fs.id;
+                  return (
+                    <button
+                      key={fs.id}
+                      type="button"
+                      onClick={() => onUpdateCustomization({ faceStyle: fs.id })}
+                      className={`cursor-pointer rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-all ${
+                        active
+                          ? 'bg-[#0648a6] text-white shadow-sm'
+                          : darkUi
+                            ? 'bg-white/6 text-slate-200 hover:bg-white/12'
+                            : 'bg-white/75 text-slate-700 hover:bg-white'
+                      }`}
+                    >
+                      {fs.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <CompactColorInput
+                  label="Цвет глаз"
+                  value={customization.eyeColor}
+                  onChange={(eyeColor) => onUpdateCustomization({ eyeColor })}
+                />
+                <CompactColorInput
+                  label="Цвет рта"
+                  value={customization.mouthColor}
+                  onChange={(mouthColor) => onUpdateCustomization({ mouthColor })}
+                />
+              </div>
+            </div>
+
+            {/* 6. 3D Accessories */}
+            <div className="space-y-1.5">
+              <div className="text-[11px] font-bold uppercase tracking-wider opacity-70">
+                3D-аксессуары на риге
+              </div>
+              {ACCESSORY_LIST.map((acc) => {
+                const active = accessories[acc.key];
+                return (
+                  <button
+                    key={acc.key}
+                    type="button"
+                    onClick={() => onUpdateAccessories({ [acc.key]: !active })}
+                    className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border p-2 text-left transition-all ${
+                      active
+                        ? 'border-[#0648a6] bg-[#0648a6]/12 shadow-xs'
+                        : `${cardBg} hover:border-slate-400/40`
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/80 text-base shadow-xs">
+                        {acc.emoji}
+                      </span>
+                      <div>
+                        <div className="text-xs font-bold leading-tight">{acc.label}</div>
+                        <div className={`text-[10px] leading-tight ${muted}`}>{acc.desc}</div>
+                      </div>
+                    </div>
+                    <div
+                      className={`h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors ${
+                        active ? 'bg-[#0648a6]' : 'bg-slate-400/35'
+                      }`}
+                    >
+                      <div
+                        className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                          active ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 7. Active Model Info & Downloads */}
+            <div className={`space-y-2 rounded-xl border p-3 ${cardBg}`}>
+              <div className={`space-y-1 text-[11px] ${muted}`}>
+                <div className="flex justify-between">
+                  <span>Активная модель:</span>
+                  <span className="font-mono-tech font-semibold text-current">{activeMeta.sourceFile}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Анимаций в файле:</span>
+                  <span className="font-semibold text-current">{activeMeta.animations.length - 1} клипов</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={onSnapshot}
+                  className="flex cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 shadow-sm hover:bg-amber-300"
+                >
+                  <Camera className="h-3.5 w-3.5" />
+                  Стикер PNG
+                </button>
+                <a
+                  href={activeMeta.modelUrl}
+                  download={activeMeta.downloadName}
+                  className="flex cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-[#0648a6] px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#053b88]"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Скачать GLB
+                </a>
+              </div>
+            </div>
+          </>
+        )}
+
         {tab === 'tracking' && (
           <>
-            {/* Error Alerts */}
             {(webcamError || micError) && (
               <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-300">
                 {webcamError || micError}
@@ -183,12 +527,7 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
             {/* Webcam Face-Mesh PiP Preview */}
             <div className={`overflow-hidden rounded-xl border ${cardBg}`}>
               <div className="relative aspect-[4/3] w-full bg-slate-950/90">
-                <canvas
-                  ref={previewCanvasRef}
-                  width={320}
-                  height={240}
-                  className="h-full w-full object-cover"
-                />
+                <canvas ref={previewCanvasRef} width={320} height={240} className="h-full w-full object-cover" />
                 {webcamStatus !== 'active' && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center text-slate-300">
                     <Video className="h-7 w-7 opacity-60" />
@@ -245,7 +584,6 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
                 <MeterBar label="Рот" value={telemetry.mouthOpen} color="bg-rose-500" darkUi={darkUi} />
               </div>
 
-              {/* Live 16-bar Voice Spectrum */}
               <div>
                 <div className="mb-1 flex items-center justify-between text-[10px]">
                   <span className={muted}>Спектр голоса / липсинк</span>
@@ -260,12 +598,7 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
                       className="flex-1 rounded-full transition-[height] duration-75"
                       style={{
                         height: `${Math.max(12, Math.round(v * 100))}%`,
-                        background:
-                          v > 0.55
-                            ? '#f43f5e'
-                            : v > 0.25
-                              ? '#f59e0b'
-                              : '#0648a6',
+                        background: v > 0.55 ? '#f43f5e' : v > 0.25 ? '#f59e0b' : '#0648a6',
                         opacity: Math.max(0.25, v + 0.2),
                       }}
                     />
@@ -274,7 +607,7 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
               </div>
             </div>
 
-            {/* Sliders */}
+            {/* Tracking Sliders */}
             <div className={`space-y-3 rounded-xl border p-3 ${cardBg}`}>
               <SliderRow
                 label="Чувствительность головы"
@@ -323,7 +656,7 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
               />
             </div>
 
-            {/* Boolean Toggles */}
+            {/* Tracking Toggles */}
             <div className={`space-y-2 rounded-xl border p-3 ${cardBg}`}>
               <ToggleRow
                 label="Авто-моргание"
@@ -351,7 +684,6 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
 
         {tab === 'stage' && (
           <>
-            {/* Backgrounds & Chroma Key */}
             <div>
               <div className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider opacity-70">
                 <ImageIcon className="h-3.5 w-3.5" />
@@ -384,7 +716,6 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
               </div>
             </div>
 
-            {/* Camera Framing Presets */}
             <div className={`space-y-2 rounded-xl border p-3 ${cardBg}`}>
               <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider opacity-70">
                 <Camera className="h-3.5 w-3.5" />
@@ -416,7 +747,6 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
               </p>
             </div>
 
-            {/* Lighting Mood */}
             <div className={`space-y-2 rounded-xl border p-3 ${cardBg}`}>
               <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider opacity-70">
                 <Sun className="h-3.5 w-3.5" />
@@ -445,7 +775,6 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
               </div>
             </div>
 
-            {/* OBS Quick Guide */}
             <div className="rounded-xl border border-[#0648a6]/25 bg-[#0648a6]/10 p-3 text-xs leading-relaxed">
               <div className="font-bold text-[#0648a6] dark:text-sky-300">Захват в OBS Studio</div>
               <p className="mt-1 opacity-85">
@@ -456,101 +785,65 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
             </div>
           </>
         )}
-
-        {tab === 'style' && (
-          <>
-            {/* 3D VTuber Accessories */}
-            <div className="space-y-2">
-              <div className="text-xs font-bold uppercase tracking-wider opacity-70">
-                3D-аксессуары на риге
-              </div>
-              {ACCESSORY_LIST.map((acc) => {
-                const active = accessories[acc.key];
-                return (
-                  <button
-                    key={acc.key}
-                    type="button"
-                    onClick={() => onUpdateAccessories({ [acc.key]: !active })}
-                    className={`flex w-full cursor-pointer items-center justify-between gap-2.5 rounded-xl border p-2.5 text-left transition-all ${
-                      active
-                        ? 'border-[#0648a6] bg-[#0648a6]/12 shadow-sm'
-                        : `${cardBg} hover:border-slate-400/40`
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/80 text-lg shadow-xs">
-                        {acc.emoji}
-                      </span>
-                      <div>
-                        <div className="text-xs font-bold">{acc.label}</div>
-                        <div className={`text-[10px] leading-tight ${muted}`}>{acc.desc}</div>
-                      </div>
-                    </div>
-                    <div
-                      className={`h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors ${
-                        active ? 'bg-[#0648a6]' : 'bg-slate-400/35'
-                      }`}
-                    >
-                      <div
-                        className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                          active ? 'translate-x-4' : 'translate-x-0'
-                        }`}
-                      />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Export & Character Info */}
-            <div className={`space-y-2.5 rounded-xl border p-3 ${cardBg}`}>
-              <div className="text-xs font-bold uppercase tracking-wider opacity-70">
-                Модель из Blender
-              </div>
-              <div className={`space-y-1 text-[11px] ${muted}`}>
-                <div className="flex justify-between">
-                  <span>Источник:</span>
-                  <span className="font-mono-tech font-semibold text-current">baby_noob_animated.blend</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Скелет:</span>
-                  <span className="font-semibold text-current">BabyNoob_Rig · 8 костей</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Анимации:</span>
-                  <span className="font-semibold text-current">5 оригинальных клипов</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Мимика:</span>
-                  <span className="font-semibold text-current">1024px Live Canvas Face</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={onSnapshot}
-                  className="flex cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 shadow-sm hover:bg-amber-300"
-                >
-                  <Camera className="h-3.5 w-3.5" />
-                  Стикер PNG
-                </button>
-                <a
-                  href="/models/baby_noob.glb"
-                  download="baby_noob_vtuber.glb"
-                  className="flex cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-[#0648a6] px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#053b88]"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  Скачать GLB
-                </a>
-              </div>
-            </div>
-          </>
-        )}
       </div>
     </aside>
   );
 };
+
+const ColorPickerRow: React.FC<{
+  label: string;
+  value: string;
+  swatches: string[];
+  onChange: (hex: string) => void;
+}> = ({ label, value, swatches, onChange }) => (
+  <div className="space-y-1.5">
+    <div className="flex items-center justify-between">
+      <span className="text-xs font-medium opacity-90">{label}</span>
+      <label className="flex cursor-pointer items-center gap-1.5 rounded-md bg-black/5 px-1.5 py-0.5">
+        <span className="font-mono-tech text-[10px] uppercase opacity-75">{value}</span>
+        <input
+          type="color"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-4 w-5 cursor-pointer border-0 bg-transparent p-0"
+        />
+      </label>
+    </div>
+    <div className="flex items-center gap-1.5">
+      {swatches.map((hex) => {
+        const selected = hex.toLowerCase() === value.toLowerCase();
+        return (
+          <button
+            key={hex}
+            type="button"
+            onClick={() => onChange(hex)}
+            title={hex}
+            className={`h-5 flex-1 cursor-pointer rounded-md border transition-transform hover:scale-105 ${
+              selected ? 'border-[#0648a6] ring-2 ring-[#0648a6]/45' : 'border-black/15'
+            }`}
+            style={{ backgroundColor: hex }}
+          />
+        );
+      })}
+    </div>
+  </div>
+);
+
+const CompactColorInput: React.FC<{
+  label: string;
+  value: string;
+  onChange: (hex: string) => void;
+}> = ({ label, value, onChange }) => (
+  <label className="flex cursor-pointer items-center justify-between rounded-lg bg-black/5 px-2.5 py-1.5 text-xs">
+    <span className="font-medium opacity-85">{label}</span>
+    <input
+      type="color"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-5 w-6 cursor-pointer border-0 bg-transparent p-0"
+    />
+  </label>
+);
 
 const MeterBar: React.FC<{ label: string; value: number; color: string; darkUi: boolean }> = ({
   label,

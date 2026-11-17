@@ -613,8 +613,10 @@ export class VTuberStage {
     root.traverse((obj) => {
       if ((obj as THREE.Bone).isBone) {
         const bone = obj as THREE.Bone;
-        bones.set(bone.name, bone);
-        boneRest.set(bone.name, {
+        // Three.js GLTFLoader sanitizes Blender dots ('Arm.L' -> 'ArmL'), normalize keys consistently
+        const key = bone.name.replace(/\./g, '');
+        bones.set(key, bone);
+        boneRest.set(key, {
           position: bone.position.clone(),
           quaternion: bone.quaternion.clone(),
           scale: bone.scale.clone(),
@@ -1608,8 +1610,8 @@ export class VTuberStage {
     }
 
     // Full 3D Webcam Arm Mirroring (smoothly slerped over procedural idle/emotion gestures!)
-    const armL = ch.bones.get('Arm.L');
-    const armLRest = ch.boneRest.get('Arm.L');
+    const armL = ch.bones.get('ArmL');
+    const armLRest = ch.boneRest.get('ArmL');
     if (armL && armLRest) {
       const idleSwing = Math.sin(t * 2.35 + 0.4) * 0.08 * bounce;
       const talkGest = isTalking ? Math.sin(t * 9.5) * this.curAudioLevel * 0.22 * bounce : 0;
@@ -1628,8 +1630,8 @@ export class VTuberStage {
       armL.scale.copy(armLRest.scale);
     }
 
-    const armR = ch.bones.get('Arm.R');
-    const armRRest = ch.boneRest.get('Arm.R');
+    const armR = ch.bones.get('ArmR');
+    const armRRest = ch.boneRest.get('ArmR');
     if (armR && armRRest) {
       const idleSwing = Math.sin(t * 2.35 + Math.PI + 0.4) * 0.08 * bounce;
       const talkGest = isTalking ? Math.sin(t * 9.5 + 1.1) * this.curAudioLevel * 0.22 * bounce : 0;
@@ -1647,11 +1649,11 @@ export class VTuberStage {
       armR.scale.copy(armRRest.scale);
     }
 
-    for (const side of ['Leg.L', 'Leg.R'] as const) {
+    for (const side of ['LegL', 'LegR'] as const) {
       const leg = ch.bones.get(side);
       const rest = ch.boneRest.get(side);
       if (!leg || !rest) continue;
-      const sign = side === 'Leg.L' ? 1 : -1;
+      const sign = side === 'LegL' ? 1 : -1;
       const kick = emoHop > 0.02 ? Math.sin(t * 7.2 + (sign > 0 ? 0 : Math.PI)) * 0.16 : 0;
       this.tmpEuler.set(kick, 0, -this.curRoll * 0.12 * sway);
       leg.position.copy(rest.position);

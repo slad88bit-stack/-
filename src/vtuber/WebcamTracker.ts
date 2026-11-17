@@ -326,7 +326,7 @@ export class WebcamTracker {
 
     let vision: VisionResolver;
     try {
-      vision = this.vision ?? (await FilesetResolver.forVisionTasks('/mediapipe/wasm'));
+      vision = this.vision ?? (await FilesetResolver.forVisionTasks('./mediapipe/wasm'));
       this.vision = vision;
       if (!this.faceLandmarker) {
         this.faceLandmarker = await this.createFaceLandmarker(vision);

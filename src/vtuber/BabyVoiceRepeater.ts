@@ -98,6 +98,21 @@ export class BabyVoiceRepeater {
     return this.lastPhraseBuffer !== null;
   }
 
+  public setMutedPaused(paused: boolean): void {
+    if (paused) {
+      this.stopCurrentPlayback();
+      if (this.phase === 'speaking') {
+        this.phase = this.stream ? 'listening' : 'idle';
+        this.emitState(true);
+      }
+      if (this.audioCtx && this.audioCtx.state === 'running') {
+        void this.audioCtx.suspend();
+      }
+    } else if (this.audioCtx && this.audioCtx.state === 'suspended' && (this.isActive() || this.stream)) {
+      void this.audioCtx.resume();
+    }
+  }
+
   public getSnapshot(): RepeaterStateSnapshot {
     const sr = this.audioCtx?.sampleRate ?? 48000;
     return {

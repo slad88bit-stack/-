@@ -27,6 +27,7 @@ import {
   type WebcamStatus,
 } from './types/vtuber';
 import { VTuberStage } from './vtuber/VTuberStage';
+import { yandexSdk } from './platform/yandexSdk';
 import { TopBar } from './components/TopBar';
 import { BottomDock } from './components/BottomDock';
 import { StudioDrawer, type DrawerTab } from './components/StudioDrawer';
@@ -86,30 +87,34 @@ function createDefaultRosterState(): SavedRosterState {
   };
 }
 
-function loadSavedRosterState(): SavedRosterState {
+function mergeRosterState(parsed: Partial<SavedRosterState> | null | undefined): SavedRosterState {
   const base = createDefaultRosterState();
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return base;
-    const parsed = JSON.parse(raw) as Partial<SavedRosterState>;
-    for (const ch of CHARACTERS) {
-      if (parsed.customByChar?.[ch.id]) {
-        base.customByChar[ch.id] = {
-          ...base.customByChar[ch.id],
-          ...parsed.customByChar[ch.id],
-        };
-      }
-      if (parsed.accByChar?.[ch.id]) {
-        base.accByChar[ch.id] = {
-          ...base.accByChar[ch.id],
-          ...parsed.accByChar[ch.id],
-        };
-      }
+  if (!parsed) return base;
+  for (const ch of CHARACTERS) {
+    if (parsed.customByChar?.[ch.id]) {
+      base.customByChar[ch.id] = {
+        ...base.customByChar[ch.id],
+        ...parsed.customByChar[ch.id],
+      };
     }
-  } catch {
-    // Ignore storage read errors
+    if (parsed.accByChar?.[ch.id]) {
+      base.accByChar[ch.id] = {
+        ...base.accByChar[ch.id],
+        ...parsed.accByChar[ch.id],
+      };
+    }
   }
   return base;
+}
+
+function loadSavedRosterState(): SavedRosterState {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return createDefaultRosterState();
+    return mergeRosterState(JSON.parse(raw) as Partial<SavedRosterState>);
+  } catch {
+    return createDefaultRosterState();
+  }
 }
 
 function pickRandom<T>(arr: readonly T[]): T {
@@ -167,14 +172,72 @@ export const App: React.FC = () => {
     }, durationMs);
   }, []);
 
-  // Persist per-character customizations automatically
+  // Persist per-character customizations automatically (localStorage + Yandex Cloud sync)
   useEffect(() => {
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(rosterState));
     } catch {
       // Ignore quota errors
     }
+    yandexSdk.saveCloudData(STORAGE_KEY, rosterState);
   }, [rosterState]);
+
+  // Yandex Games SDK initialization, cloud save load, audio mute on tab hide, and contextmenu guard
+  useEffect(() => {
+    let cancelled = false;
+
+    const pauseAudio = () => {
+      stageRef.current?.repeater.setMutedPaused(true);
+      stageRef.current?.audio.setMutedPaused(true);
+    };
+    const resumeAudio = () => {
+      stageRef.current?.repeater.setMutedPaused(false);
+      stageRef.current?.audio.setMutedPaused(false);
+    };
+
+    yandexSdk.setLifecycleHandlers({
+      onPause: pauseAudio,
+      onResume: resumeAudio,
+    });
+
+    void yandexSdk.init().then(async () => {
+      if (cancelled) return;
+      const cloudData = await yandexSdk.loadCloudData<Partial<SavedRosterState>>(STORAGE_KEY);
+      if (!cancelled && cloudData) {
+        setRosterState(mergeRosterState(cloudData));
+      }
+    });
+
+    const onVisibility = () => {
+      if (document.hidden) {
+        pauseAudio();
+        yandexSdk.setGameplayActive(false);
+      } else {
+        resumeAudio();
+        yandexSdk.setGameplayActive(true);
+      }
+    };
+
+    const onBlur = () => pauseAudio();
+    const onFocus = () => {
+      if (!document.hidden) resumeAudio();
+    };
+    const onContextMenu = (e: MouseEvent) => e.preventDefault();
+
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('contextmenu', onContextMenu);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('contextmenu', onContextMenu);
+      yandexSdk.setGameplayActive(false);
+    };
+  }, []);
 
   // Initialize Three.js VTuber Stage once
   useEffect(() => {
@@ -190,11 +253,15 @@ export const App: React.FC = () => {
         initial.customByChar.noob,
         initial.accByChar.noob,
         {
-          onLoaded: () => setLoading(false),
+          onLoaded: () => {
+            setLoading(false);
+            yandexSdk.signalGameReady();
+          },
           onCharacterSwitching: (sw) => setSwitchingChar(sw),
           onError: (msg) => {
             setLoading(false);
             setLoadError(msg);
+            yandexSdk.signalGameReady();
           },
           onAnimationChange: (anim) => setAnimationMode(anim),
           onTelemetry: (snap) => setTelemetry(snap),
@@ -710,7 +777,7 @@ export const App: React.FC = () => {
       {/* 100% Full-Viewport 3D VTuber Canvas */}
       <div
         ref={stageContainerRef}
-        className="h-full w-full cursor-grab active:cursor-grabbing"
+        className="h-full w-full touch-none cursor-grab active:cursor-grabbing"
       />
 
       {/* Initial Loading Overlay */}

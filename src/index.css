@@ -2,9 +2,9 @@
 
 @layer base {
   :root {
-    --font-display: 'Fredoka', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --font-display: ui-rounded, 'SF Pro Rounded', 'Nunito', 'Trebuchet MS', system-ui, -apple-system, sans-serif;
+    --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Monaco, Consolas, monospace;
   }
 
   html,
@@ -15,6 +15,12 @@
     margin: 0;
     padding: 0;
     overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
     font-family: var(--font-sans);
     background-color: #f4f1ea;
     color: #18202c;

@@ -7,6 +7,7 @@
     "postinstall": "node -e \"const fs=require('fs'),p=require('path');const src=p.join('node_modules','@mediapipe','tasks-vision','wasm'),dst=p.join('public','mediapipe','wasm');if(fs.existsSync(src)){fs.mkdirSync(dst,{recursive:true});for(const f of fs.readdirSync(src))fs.copyFileSync(p.join(src,f),p.join(dst,f));}\"",
     "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "tsc -b && vite build",
+    "pack:yandex": "node scripts/pack-yandex.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "export-model": "LD_LIBRARY_PATH=.venv/stubs .venv/bin/python scripts/export_model.py"
   },

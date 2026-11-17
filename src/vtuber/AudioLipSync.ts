@@ -75,6 +75,15 @@ export class AudioLipSync {
     return this.active;
   }
 
+  public setMutedPaused(paused: boolean): void {
+    if (!this.audioCtx || this.audioCtx.state === 'closed') return;
+    if (paused && this.audioCtx.state === 'running') {
+      void this.audioCtx.suspend();
+    } else if (!paused && this.active && this.audioCtx.state === 'suspended') {
+      void this.audioCtx.resume();
+    }
+  }
+
   public sample(gain: number, dt: number): LipSyncSample {
     const emptySpectrum = new Array<number>(16).fill(0);
     if (!this.active || !this.analyser || !this.timeData || !this.freqData) {

@@ -618,7 +618,7 @@ export class VTuberStage {
     const materials = new Map<string, THREE.MeshStandardMaterial>();
     const slots = new Map<string, DynamicCanvasSlot>();
 
-    const noobBadgeImg = id === 'noob' ? await loadImage('/textures/roblox_badge.png') : null;
+    const noobBadgeImg = id === 'noob' ? await loadImage('./textures/roblox_badge.png') : null;
 
     root.traverse((obj) => {
       if ((obj as THREE.Bone).isBone) {

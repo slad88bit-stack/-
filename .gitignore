@@ -6,4 +6,3 @@ dist/
 *.tsbuildinfo
 .DS_Store
 public/mediapipe/
-yandex-game.zip

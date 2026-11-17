@@ -451,11 +451,16 @@ export const App: React.FC = () => {
     setDrawerOpen(true);
 
     try {
-      await stage.webcam.start();
+      await stage.webcam.start(settings.armTracking);
       setWebcamStatus('active');
       setDemoSpeech(false);
       setAnimationMode('live');
-      showToast('Трекинг лица, рта и рук запущен! Двигай губами и руками перед камерой', 3200);
+      showToast(
+        settings.armTracking
+          ? 'Трекинг лица, рта и рук запущен!'
+          : 'Трекинг лица и рта запущен (руки отключены для макс. FPS)',
+        3000,
+      );
     } catch (err) {
       const msg =
         err instanceof Error
@@ -465,7 +470,20 @@ export const App: React.FC = () => {
       setWebcamError(msg);
       showToast('Не удалось включить камеру', 3200);
     }
-  }, [webcamStatus, showToast]);
+  }, [webcamStatus, settings.armTracking, showToast]);
+
+  const handleToggleArmTracking = useCallback(() => {
+    setSettings((prev) => {
+      const next = !prev.armTracking;
+      showToast(
+        next
+          ? '✋ Трекинг рук включён (лёгкий режим)'
+          : '✋ Трекинг рук отключён — максимальный FPS',
+        2600,
+      );
+      return { ...prev, armTracking: next };
+    });
+  }, [showToast]);
 
   const handleToggleMic = useCallback(async () => {
     const stage = stageRef.current;
@@ -693,6 +711,7 @@ export const App: React.FC = () => {
             characterId={characterId}
             switchingChar={switchingChar}
             webcamStatus={webcamStatus}
+            armTracking={settings.armTracking}
             micStatus={micStatus}
             repeaterPhase={repeater.phase}
             mouseTracking={mouseTracking}
@@ -703,6 +722,7 @@ export const App: React.FC = () => {
             telemetry={telemetry}
             onSelectCharacter={handleSelectCharacter}
             onToggleWebcam={() => void handleToggleWebcam()}
+            onToggleArmTracking={handleToggleArmTracking}
             onToggleMic={() => void handleToggleMic()}
             onToggleRepeater={() => void handleToggleRepeater()}
             onToggleMouse={handleToggleMouse}

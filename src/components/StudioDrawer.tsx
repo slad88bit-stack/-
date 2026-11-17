@@ -768,26 +768,40 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
                   </div>
                 )}
               </div>
-              {webcamStatus === 'active' && settings.armTracking && (
+              {webcamStatus === 'active' && (
                 <div
-                  className={`flex items-center justify-between gap-2 border-t px-2.5 py-1.5 text-[10px] ${
+                  className={`flex flex-wrap items-center justify-between gap-1.5 border-t px-2.5 py-1.5 text-[10px] ${
                     darkUi ? 'border-white/10 text-slate-300' : 'border-slate-900/8 text-slate-600'
                   }`}
                 >
                   <span>
-                    Кисти: {telemetry.handReady ? `✓ (${telemetry.handsCount})` : '⏳'} · Поза:{' '}
-                    {telemetry.poseReady ? '✓' : '⏳'}
+                    {settings.armTracking
+                      ? `Кисти: ${telemetry.handReady ? `✓ (${telemetry.handsCount})` : '⏳'} · Поза: ${telemetry.poseReady ? '✓' : '⏳'}`
+                      : 'Трекинг рук отключён (макс. FPS)'}
                   </span>
-                  <button
-                    type="button"
-                    onClick={onTestArms}
-                    className="cursor-pointer rounded-md bg-sky-500/15 px-2 py-0.5 font-semibold text-sky-600 hover:bg-sky-500/25 dark:text-sky-300"
-                  >
-                    Тест рук 🙋
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onUpdateSettings({ armTracking: !settings.armTracking })}
+                      className={`cursor-pointer rounded-md px-2 py-0.5 font-semibold transition-all ${
+                        settings.armTracking
+                          ? 'bg-rose-500/15 text-rose-600 hover:bg-rose-500/25 dark:text-rose-300'
+                          : 'bg-sky-500/15 text-sky-600 hover:bg-sky-500/25 dark:text-sky-300'
+                      }`}
+                    >
+                      {settings.armTracking ? 'Отключить руки' : 'Включить руки'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onTestArms}
+                      className="cursor-pointer rounded-md bg-sky-500/15 px-2 py-0.5 font-semibold text-sky-600 hover:bg-sky-500/25 dark:text-sky-300"
+                    >
+                      Тест 🙋
+                    </button>
+                  </div>
                 </div>
               )}
-              {telemetry.armError && (
+              {telemetry.armError && settings.armTracking && (
                 <div className="border-t border-rose-500/25 bg-rose-500/10 px-2.5 py-1.5 text-[10px] text-rose-600 dark:text-rose-300">
                   {telemetry.armError}
                 </div>
@@ -795,13 +809,26 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
             </div>
 
             {webcamStatus !== 'active' && (
-              <button
-                type="button"
-                onClick={onTestArms}
-                className={`flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold transition-all ${cardBg} hover:border-sky-500/40`}
-              >
-                🙋 Тест поднятия рук (проверка 3D-рига)
-              </button>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onUpdateSettings({ armTracking: !settings.armTracking })}
+                  className={`flex cursor-pointer items-center justify-center gap-1 rounded-xl border px-2.5 py-2 text-xs font-bold transition-all ${
+                    settings.armTracking
+                      ? `${cardBg} hover:border-rose-500/40`
+                      : 'border-sky-500/30 bg-sky-500/12 text-sky-700 hover:bg-sky-500/20 dark:text-sky-300'
+                  }`}
+                >
+                  {settings.armTracking ? '✋ Отключить руки' : '✋ Включить руки'}
+                </button>
+                <button
+                  type="button"
+                  onClick={onTestArms}
+                  className={`flex cursor-pointer items-center justify-center gap-1 rounded-xl border px-2.5 py-2 text-xs font-bold transition-all ${cardBg} hover:border-sky-500/40`}
+                >
+                  🙋 Тест рук
+                </button>
+              </div>
             )}
 
             {/* Live Telemetry & Voice Spectrum */}

@@ -1036,6 +1036,7 @@ export class VTuberStage {
 
   public setSettings(settings: TrackingSettings): void {
     this.settings = { ...settings };
+    this.webcam.setArmTrackingEnabled(settings.armTracking);
     this.repeater.configure({
       babyPitch: settings.babyPitch,
       autoListen: settings.repeaterAutoListen,

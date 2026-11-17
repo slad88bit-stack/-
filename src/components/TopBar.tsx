@@ -3,6 +3,7 @@ import {
   AudioLines,
   Camera,
   EyeOff,
+  Hand,
   Heart,
   Loader2,
   Mic,
@@ -27,6 +28,7 @@ interface TopBarProps {
   characterId: CharacterId;
   switchingChar: boolean;
   webcamStatus: WebcamStatus;
+  armTracking: boolean;
   micStatus: MicStatus;
   repeaterPhase: RepeaterPhase;
   mouseTracking: boolean;
@@ -37,6 +39,7 @@ interface TopBarProps {
   telemetry: TelemetrySnapshot;
   onSelectCharacter: (id: CharacterId) => void;
   onToggleWebcam: () => void;
+  onToggleArmTracking: () => void;
   onToggleMic: () => void;
   onToggleRepeater: () => void;
   onToggleMouse: () => void;
@@ -52,6 +55,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   characterId,
   switchingChar,
   webcamStatus,
+  armTracking,
   micStatus,
   repeaterPhase,
   mouseTracking,
@@ -62,6 +66,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   telemetry,
   onSelectCharacter,
   onToggleWebcam,
+  onToggleArmTracking,
   onToggleMic,
   onToggleRepeater,
   onToggleMouse,
@@ -214,6 +219,30 @@ export const TopBar: React.FC<TopBarProps> = ({
             <VideoOff className="h-3.5 w-3.5 opacity-80" />
           )}
           <span className="hidden md:inline">Камера</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onToggleArmTracking}
+          title={
+            armTracking
+              ? 'Отключить трекинг рук (ускоряет FPS, оставляет только лицо и рот)'
+              : 'Включить 3D-трекинг рук по камере'
+          }
+          className={`flex cursor-pointer items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition-all ${
+            armTracking
+              ? webcamStatus === 'active'
+                ? 'border-sky-500/45 bg-sky-500 text-white shadow-sm shadow-sky-500/25'
+                : darkUi
+                  ? 'border-sky-400/25 bg-sky-500/18 text-sky-200 hover:bg-sky-500/28'
+                  : 'border-sky-500/20 bg-sky-500/12 text-sky-900 hover:bg-sky-500/20'
+              : darkUi
+                ? 'border-white/10 bg-white/5 text-slate-400 line-through hover:bg-white/10'
+                : 'border-slate-900/10 bg-slate-900/5 text-slate-500 line-through hover:bg-slate-900/10'
+          }`}
+        >
+          <Hand className={`h-3.5 w-3.5 ${armTracking ? '' : 'opacity-50'}`} />
+          <span className="hidden md:inline">{armTracking ? 'Руки' : 'Без рук'}</span>
         </button>
 
         <button

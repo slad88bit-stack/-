@@ -4,6 +4,7 @@ import {
   Crosshair,
   Dices,
   Download,
+  ExternalLink,
   Image as ImageIcon,
   Layers,
   Mic,
@@ -54,6 +55,7 @@ interface StudioDrawerProps {
   webcamStatus: WebcamStatus;
   webcamError: string | null;
   micError: string | null;
+  canPopout: boolean;
   repeater: RepeaterStateSnapshot;
   telemetry: TelemetrySnapshot;
   settings: TrackingSettings;
@@ -62,6 +64,7 @@ interface StudioDrawerProps {
   lighting: LightingPresetId;
   onChangeTab: (tab: DrawerTab) => void;
   onClose: () => void;
+  onOpenInNewTab: () => void;
   onSelectCharacter: (id: CharacterId) => void;
   onUpdateCustomization: (patch: Partial<CharacterCustomization>) => void;
   onApplyPreset: (presetId: string) => void;
@@ -134,6 +137,7 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
   webcamStatus,
   webcamError,
   micError,
+  canPopout,
   repeater,
   telemetry,
   settings,
@@ -142,6 +146,7 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
   lighting,
   onChangeTab,
   onClose,
+  onOpenInNewTab,
   onSelectCharacter,
   onUpdateCustomization,
   onApplyPreset,
@@ -827,8 +832,18 @@ export const StudioDrawer: React.FC<StudioDrawerProps> = ({
         {tab === 'tracking' && (
           <>
             {(webcamError || micError || repeater.error) && (
-              <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-300">
-                {repeater.error || webcamError || micError}
+              <div className="space-y-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2.5 text-xs text-rose-600 dark:text-rose-300">
+                <div>{webcamError || micError || repeater.error}</div>
+                {canPopout && (
+                  <button
+                    type="button"
+                    onClick={onOpenInNewTab}
+                    className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-600"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Открыть в новой вкладке (с камерой)
+                  </button>
+                )}
               </div>
             )}
 

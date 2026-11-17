@@ -28,6 +28,7 @@ import {
 } from './types/vtuber';
 import { VTuberStage } from './vtuber/VTuberStage';
 import { yandexSdk } from './platform/yandexSdk';
+import { canOfferPopoutTab, formatMediaAccessError } from './platform/mediaGuard';
 import { TopBar } from './components/TopBar';
 import { BottomDock } from './components/BottomDock';
 import { StudioDrawer, type DrawerTab } from './components/StudioDrawer';
@@ -555,10 +556,7 @@ export const App: React.FC = () => {
         3000,
       );
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : 'Нет доступа к веб-камере. Проверь разрешения браузера.';
+      const msg = formatMediaAccessError('camera', err);
       setWebcamStatus('error');
       setWebcamError(msg);
       showToast('Не удалось включить камеру', 3200);
@@ -601,10 +599,7 @@ export const App: React.FC = () => {
       setDemoSpeech(false);
       showToast('Микрофон активен — говори, персонаж повторяет губами!');
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : 'Нет доступа к микрофону. Проверь разрешения браузера.';
+      const msg = formatMediaAccessError('mic', err);
       setMicStatus('error');
       setMicError(msg);
       setDrawerTab('tracking');
@@ -634,13 +629,11 @@ export const App: React.FC = () => {
       await stage.repeater.startListening();
       showToast('👶 Повторяшка включена! Скажи фразу — персонаж повторит голосом малыша!', 3600);
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : 'Нет доступа к микрофону. Проверь разрешения браузера.';
+      const msg = formatMediaAccessError('mic', err);
+      setMicError(msg);
       setDrawerTab('tracking');
       setDrawerOpen(true);
-      showToast(`Микрофон: ${msg}`, 3400);
+      showToast('Не удалось включить микрофон', 3400);
     }
   }, [micStatus, showToast]);
 
@@ -659,13 +652,11 @@ export const App: React.FC = () => {
       await stage.repeater.startManualRecording();
       showToast('🎙️ Говори фразу и нажми «Повторить!»', 2800);
     } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : 'Нет доступа к микрофону. Проверь разрешения браузера.';
+      const msg = formatMediaAccessError('mic', err);
+      setMicError(msg);
       setDrawerTab('tracking');
       setDrawerOpen(true);
-      showToast(`Микрофон: ${msg}`, 3400);
+      showToast('Не удалось включить микрофон', 3400);
     }
   }, [micStatus, showToast]);
 
@@ -761,6 +752,12 @@ export const App: React.FC = () => {
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);
 
+  const canPopout = useMemo(() => canOfferPopoutTab(), []);
+
+  const handleOpenInNewTab = useCallback(() => {
+    window.open(window.location.href, '_blank', 'noopener,noreferrer');
+  }, []);
+
   const handleToggleFullscreen = useCallback(async () => {
     try {
       if (!document.fullscreenElement) {
@@ -840,6 +837,7 @@ export const App: React.FC = () => {
             isCustomizerActive={drawerOpen && drawerTab === 'customizer'}
             isHairEditorActive={drawerOpen && drawerTab === 'hair'}
             isFullscreen={isFullscreen}
+            canPopout={canPopout}
             darkUi={darkUi}
             telemetry={telemetry}
             onSelectCharacter={handleSelectCharacter}
@@ -852,6 +850,7 @@ export const App: React.FC = () => {
             onHeadpat={handleHeadpat}
             onSnapshot={handleSnapshot}
             onToggleFullscreen={() => void handleToggleFullscreen()}
+            onOpenInNewTab={handleOpenInNewTab}
             onEnterObsMode={() => {
               setObsMode(true);
               showToast('OBS режим активен · нажми H или Esc, чтобы вернуть интерфейс', 3000);
@@ -981,6 +980,7 @@ export const App: React.FC = () => {
             webcamStatus={webcamStatus}
             webcamError={webcamError}
             micError={micError}
+            canPopout={canPopout}
             repeater={repeater}
             telemetry={telemetry}
             settings={settings}
@@ -989,6 +989,7 @@ export const App: React.FC = () => {
             lighting={lighting}
             onChangeTab={setDrawerTab}
             onClose={() => setDrawerOpen(false)}
+            onOpenInNewTab={handleOpenInNewTab}
             onSelectCharacter={handleSelectCharacter}
             onUpdateCustomization={handleUpdateCustomization}
             onApplyPreset={handleApplyPreset}

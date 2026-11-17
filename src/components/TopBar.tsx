@@ -2,6 +2,7 @@ import React from 'react';
 import {
   AudioLines,
   Camera,
+  ExternalLink,
   EyeOff,
   Hand,
   Heart,
@@ -40,6 +41,7 @@ interface TopBarProps {
   isCustomizerActive: boolean;
   isHairEditorActive: boolean;
   isFullscreen: boolean;
+  canPopout: boolean;
   darkUi: boolean;
   telemetry: TelemetrySnapshot;
   onSelectCharacter: (id: CharacterId) => void;
@@ -52,6 +54,7 @@ interface TopBarProps {
   onHeadpat: () => void;
   onSnapshot: () => void;
   onToggleFullscreen: () => void;
+  onOpenInNewTab: () => void;
   onEnterObsMode: () => void;
   onOpenCustomizer: () => void;
   onOpenHairEditor: () => void;
@@ -71,6 +74,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   isCustomizerActive,
   isHairEditorActive,
   isFullscreen,
+  canPopout,
   darkUi,
   telemetry,
   onSelectCharacter,
@@ -83,6 +87,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onHeadpat,
   onSnapshot,
   onToggleFullscreen,
+  onOpenInNewTab,
   onEnterObsMode,
   onOpenCustomizer,
   onOpenHairEditor,
@@ -401,6 +406,17 @@ export const TopBar: React.FC<TopBarProps> = ({
         >
           {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
         </button>
+
+        {canPopout && (
+          <button
+            type="button"
+            onClick={onOpenInNewTab}
+            title="Открыть в отдельной вкладке (во весь экран + камера и микрофон)"
+            className="flex cursor-pointer items-center gap-1 rounded-xl bg-emerald-500/20 px-2 py-1.5 text-xs font-bold text-emerald-700 transition-all hover:bg-emerald-500/30 dark:text-emerald-300"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </button>
+        )}
 
         <button
           type="button"
